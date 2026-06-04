@@ -2,7 +2,10 @@ import { useEffect, useRef } from 'react'
 import type { ArticleListItem } from '../types'
 import { useArticlesStore } from '../store/articles'
 
-export function useSSE(onUnauthorized?: () => void) {
+export function useSSE(
+  onUnauthorized?: () => void,
+  onEvent?: (event: { type: string; [key: string]: unknown }) => void,
+) {
   const prependArticle = useArticlesStore(state => state.prependArticle)
   const esRef = useRef<EventSource | null>(null)
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -29,6 +32,7 @@ export function useSSE(onUnauthorized?: () => void) {
           const article = message.data as ArticleListItem
           prependArticle(article)
         }
+        onEvent?.(message)
       } catch (err) {
         console.error('Failed to parse SSE message:', err)
       }

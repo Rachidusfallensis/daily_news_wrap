@@ -1,14 +1,19 @@
-"""Discovery API router — EXPAND + RESOLVE endpoints (Story 13-3).
+"""Discovery API router — EXPAND + RESOLVE + background RUN endpoints.
 
 Exposes the source_discovery service functions behind authenticated endpoints
 with per-user rate limiting (expand only — resolve is stateless data transform).
 
 FR-MT-59–62: HTTP layer wrapping expand + resolve_verify_rank services.
+Story 15.1: POST /api/discovery/run + GET /api/discovery/run/{id} for
+non-blocking background job orchestration.
 """
 
+import asyncio
+import hashlib
+import json
 import os
 import time
-from typing import Optional
+from typing import List, Optional
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -184,3 +189,137 @@ async def post_apply(
     except Exception as e:
         logger.error("apply_endpoint_failed", user_id=user_id, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# POST /api/discovery/run  — async background job (Story 15.1)
+# GET  /api/discovery/run/{run_id}
+# ---------------------------------------------------------------------------
+
+# Run rate limiter — reuse expand pattern (10 per hour per user)
+_run_calls: dict[int, list[float]] = {}
+
+
+def _check_run_rate_limit(user_id: int) -> Optional[int]:
+    now = time.monotonic()
+    window = EXPAND_RATE_WINDOW_SECONDS
+    history = _run_calls.setdefault(user_id, [])
+    history[:] = [t for t in history if t > now - window]
+    if len(history) >= EXPAND_RATE_LIMIT:
+        return max(int(window - (now - history[0])) + 1, 1)
+    history.append(now)
+    return None
+
+
+class DiscoveryRunRequest(BaseModel):
+    thesis_text: str
+    keywords: List[str] = []
+
+
+class DiscoveryRunResponse(BaseModel):
+    run_id: int
+    status: str
+
+
+class DiscoveryRunStatusResponse(BaseModel):
+    run_id: int
+    status: str
+    pack: Optional[source_discovery.DiscoveryPack] = None
+
+
+@router.post("/run", response_model=DiscoveryRunResponse, status_code=202)
+async def post_discovery_run(
+    body: DiscoveryRunRequest,
+    response: Response,
+    current_user: dict = Depends(require_session),
+):
+    """Start a background discovery job and return a run_id immediately.
+
+    If a completed run for the same thesis_text already exists, returns it
+    without spawning a new task (input-hash dedup).
+    """
+    from sqlalchemy import text as _text
+    from database import engine as _engine
+
+    user_id = current_user["id"]
+    retry_after = _check_run_rate_limit(user_id)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Discovery run rate limit exceeded",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    sanitized = source_discovery.sanitize(body.thesis_text)
+    input_hash = hashlib.sha256(sanitized.encode("utf-8")).hexdigest()
+
+    # Check for a recent completed run with the same input (dedup)
+    with _engine.connect() as conn:
+        row = conn.execute(
+            _text(
+                "SELECT id, status FROM discovery_runs "
+                "WHERE user_id = :uid AND expand_input = :h AND status = 'done' "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            {"uid": user_id, "h": input_hash},
+        ).fetchone()
+        if row:
+            logger.info("run_cache_hit", user_id=user_id, run_id=row[0])
+            return DiscoveryRunResponse(run_id=row[0], status="done")
+
+        result = conn.execute(
+            _text(
+                "INSERT INTO discovery_runs (user_id, expand_input, status, created_at) "
+                "VALUES (:uid, :h, 'pending', datetime('now'))"
+            ),
+            {"uid": user_id, "h": input_hash},
+        )
+        conn.commit()
+        run_id = result.lastrowid
+
+    asyncio.create_task(
+        source_discovery.run_discovery_job(
+            run_id=run_id,
+            user_id=user_id,
+            thesis_text=body.thesis_text,
+            keywords=body.keywords or None,
+        )
+    )
+    logger.info("run_started", user_id=user_id, run_id=run_id)
+    return DiscoveryRunResponse(run_id=run_id, status="pending")
+
+
+@router.get("/run/{run_id}", response_model=DiscoveryRunStatusResponse)
+async def get_discovery_run(
+    run_id: int,
+    current_user: dict = Depends(require_session),
+):
+    """Poll a discovery run for status and result.
+
+    Returns 404 if the run does not exist or belongs to a different user
+    (isolation enforced via user_id from require_session).
+    """
+    from sqlalchemy import text as _text
+    from database import engine as _engine
+
+    user_id = current_user["id"]
+    with _engine.connect() as conn:
+        row = conn.execute(
+            _text(
+                "SELECT id, status, pack_result_json "
+                "FROM discovery_runs WHERE id = :rid AND user_id = :uid"
+            ),
+            {"rid": run_id, "uid": user_id},
+        ).fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Discovery run not found")
+
+    pack: Optional[source_discovery.DiscoveryPack] = None
+    if row[2]:
+        try:
+            pack = source_discovery.DiscoveryPack.model_validate_json(row[2])
+        except Exception:
+            pass
+
+    return DiscoveryRunStatusResponse(run_id=row[0], status=row[1], pack=pack)

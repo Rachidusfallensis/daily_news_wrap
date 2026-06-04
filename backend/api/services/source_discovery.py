@@ -668,3 +668,115 @@ async def resolve_verify_rank(expand_result: ExpandResult) -> DiscoveryPack:
     except Exception as e:
         logger.error("pipeline_failed", error=str(e))
         return DiscoveryPack()
+
+
+# ===========================================================================
+# Story 15.1 — Background discovery job (non-blocking orchestration)
+# ===========================================================================
+
+
+def _make_expand_result_from_keywords(keywords: List[str], field_label: str) -> ExpandResult:
+    """Construct a synthetic ExpandResult from bootstrap keywords.
+
+    Avoids a second LLM call when the bootstrap already produced keywords.
+    Keywords are distributed across concepts and query_terms.
+    """
+    half = max(1, len(keywords) // 2)
+    return ExpandResult(
+        field_label=field_label or "",
+        concepts=keywords[:half],
+        venue_keywords=[],
+        author_keywords=[],
+        query_terms=keywords[half:],
+        language="en",
+        degraded=False,
+    )
+
+
+async def run_discovery_job(
+    run_id: int,
+    user_id: int,
+    thesis_text: str,
+    keywords: List[str] | None = None,
+) -> None:
+    """Background coroutine: expand → resolve → verify → rank → persist status.
+
+    - Updates discovery_runs.status at each stage.
+    - Broadcasts SSE progress events to the user (discovery:expanding, …).
+    - Never raises — sets status='error' on any failure.
+    - When keywords are supplied (from bootstrap), skips the LLM expand call.
+    """
+    from sqlalchemy import text as _text
+    from database import engine as _engine
+
+    # Lazy import so the scorer container (no sse module) doesn't break.
+    try:
+        from sse import broadcast_to_user as _broadcast
+    except ImportError:
+        async def _broadcast(msg: dict, user_id: int) -> None:  # type: ignore[misc]
+            pass
+
+    def _set_status(conn, status: str) -> None:
+        conn.execute(
+            _text("UPDATE discovery_runs SET status = :s WHERE id = :id"),
+            {"s": status, "id": run_id},
+        )
+        conn.commit()
+
+    def _store_result(conn, expand_json: str, pack_json: str) -> None:
+        conn.execute(
+            _text(
+                "UPDATE discovery_runs "
+                "SET expand_result_json = :e, pack_result_json = :p "
+                "WHERE id = :id"
+            ),
+            {"e": expand_json, "p": pack_json, "id": run_id},
+        )
+        conn.commit()
+
+    try:
+        with _engine.connect() as conn:
+            _set_status(conn, "expanding")
+        await _broadcast({"type": "discovery:expanding", "run_id": run_id}, user_id)
+
+        # EXPAND — use bootstrap keywords if available to skip LLM call
+        if keywords:
+            sanitized = sanitize(thesis_text)
+            expand_result = _make_expand_result_from_keywords(
+                keywords, field_label=sanitized[:60]
+            )
+            logger.info("run_job_expand_from_keywords", run_id=run_id, kw_count=len(keywords))
+        else:
+            expand_result = await expand(thesis_text)
+
+        with _engine.connect() as conn:
+            _set_status(conn, "resolving")
+        await _broadcast({"type": "discovery:resolving", "run_id": run_id}, user_id)
+
+        # RESOLVE / VERIFY / RANK
+        pack = await resolve_verify_rank(expand_result)
+
+        with _engine.connect() as conn:
+            _store_result(
+                conn,
+                json.dumps(expand_result.model_dump()),
+                json.dumps(pack.model_dump()),
+            )
+            _set_status(conn, "done")
+        await _broadcast({"type": "discovery:done", "run_id": run_id}, user_id)
+        logger.info(
+            "run_job_done",
+            run_id=run_id,
+            sources=len(pack.sources),
+            venues=len(pack.venues),
+            authors=len(pack.authors),
+        )
+
+    except Exception as exc:
+        logger.error("run_job_failed", run_id=run_id, error=str(exc))
+        try:
+            with _engine.connect() as conn:
+                _set_status(conn, "error")
+            await _broadcast({"type": "discovery:error", "run_id": run_id}, user_id)
+        except Exception:
+            pass

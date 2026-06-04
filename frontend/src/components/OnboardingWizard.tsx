@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import ConfigBootstrapStep from './ConfigBootstrapStep'
+import DiscoveryStep, { type AcceptedItems } from './DiscoveryStep'
 import FacetSchemaEditor from './FacetSchemaEditor'
 import TemplateBrowser from './TemplateBrowser'
 import { Loader2 } from 'lucide-react'
@@ -9,15 +10,7 @@ interface OnboardingWizardProps {
   onComplete: () => void
 }
 
-const STEPS = ['Thesis', 'Clusters', 'Feeds', 'First run']
-
-interface CatalogFeed {
-  id: number
-  name: string
-  url: string
-  category: string
-  subscribed: boolean
-}
+const STEPS = ['Thesis', 'Clusters', 'Sources', 'First run']
 
 export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const [step, setStep] = useState(1)
@@ -27,26 +20,16 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const [completing, setCompleting] = useState(false)
   const [error, setError] = useState('')
 
-  const [catalog, setCatalog] = useState<CatalogFeed[]>([])
-  const [toggling, setToggling] = useState<number | null>(null)
-
   const [manualClusters, setManualClusters] = useState<ClusterProposal[]>([])
   const [manualFacetSchema, setManualFacetSchema] = useState<FacetSchema>({ version: 1, dimensions: [] })
   const [showTemplates, setShowTemplates] = useState(false)
+
+  const [discoveryRunId, setDiscoveryRunId] = useState<number | null>(null)
 
   const [pollPhase, setPollPhase] = useState<'running' | 'preview'>('running')
   const [scoredCount, setScoredCount] = useState(0)
   const [previewArticles, setPreviewArticles] = useState<any[]>([])
   const [pollTriggered, setPollTriggered] = useState(false)
-
-  useEffect(() => {
-    if (step === 3) {
-      fetch('/api/feeds/catalog', { credentials: 'include' })
-        .then(r => r.ok ? r.json() : [])
-        .then(data => setCatalog(data))
-        .catch(() => {})
-    }
-  }, [step])
 
   const handleStep1 = async () => {
     setError('')
@@ -65,6 +48,13 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         return
       }
       setSaving(false)
+      // Fire bootstrap warm-up in background — do not await
+      fetch('/api/profile/bootstrap', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thesis_text: thesisTitle.trim() }),
+      }).catch(() => {})
       setStep(2)
     } catch {
       setError('Network error')
@@ -93,6 +83,17 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         setSaving(false)
         return
       }
+      // Fire discovery job in background — navigate immediately
+      const keywords = result?.keywords ?? []
+      fetch('/api/discovery/run', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thesis_text: thesisTitle, keywords }),
+      })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data?.run_id) setDiscoveryRunId(data.run_id) })
+        .catch(() => {})
       setSaving(false)
       setStep(3)
     } catch {
@@ -138,6 +139,16 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         setSaving(false)
         return
       }
+      // Fire discovery job with no keywords
+      fetch('/api/discovery/run', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thesis_text: thesisTitle, keywords: [] }),
+      })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data?.run_id) setDiscoveryRunId(data.run_id) })
+        .catch(() => {})
       setSaving(false)
       setStep(3)
     } catch {
@@ -146,23 +157,18 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     }
   }
 
-  const handleToggleFeed = async (feed: CatalogFeed) => {
-    setToggling(feed.id)
-    setError('')
-    try {
-      const method = feed.subscribed ? 'DELETE' : 'POST'
-      const res = await fetch(`/api/feeds/${feed.id}/subscribe`, {
-        method,
-        credentials: 'include',
-      })
-      if (res.ok) {
-        setCatalog(prev => prev.map(f => f.id === feed.id ? { ...f, subscribed: !f.subscribed } : f))
-      }
-    } catch {
-      setError('Failed to toggle feed')
-    } finally {
-      setToggling(null)
-    }
+  const handleDiscoveryApply = async (accepted: AcceptedItems) => {
+    await fetch('/api/discovery/apply', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sources: accepted.sources,
+        venues: accepted.venues,
+        authors: accepted.authors,
+      }),
+    }).catch(() => {})
+    setStep(4)
   }
 
   const handleComplete = async () => {
@@ -192,10 +198,8 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     if (step !== 4 || pollTriggered) return
     setPollTriggered(true)
 
-    // Trigger poll
     fetch('/api/poll/trigger', { method: 'POST', credentials: 'include' }).catch(() => {})
 
-    // Connect SSE
     const evtSource = new EventSource('/api/stream', { withCredentials: true })
     const collected: any[] = []
 
@@ -209,20 +213,16 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       } catch {}
     }
 
-    // Poll preview endpoint every 5s
     const previewTimer = setInterval(async () => {
       try {
         const res = await fetch('/api/onboarding/preview', { credentials: 'include' })
         if (res.ok) {
           const data = await res.json()
-          if (data.length >= 1) {
-            setPreviewArticles(data)
-          }
+          if (data.length >= 1) setPreviewArticles(data)
         }
       } catch {}
     }, 5000)
 
-    // After 3 articles or 45s timeout, show preview
     const articleCheck = setInterval(() => {
       if (collected.length >= 3) {
         setPollPhase('preview')
@@ -441,61 +441,16 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   }
 
   if (step === 3) {
-    const grouped: Record<string, CatalogFeed[]> = {}
-    const feeds = Array.isArray(catalog) ? catalog : []
-    for (const feed of feeds) {
-      const cat = feed.category || 'General'
-      if (!grouped[cat]) grouped[cat] = []
-      grouped[cat].push(feed)
-    }
-
     return (
       <div className="flex h-screen w-screen items-start justify-center bg-bg-base pt-16 overflow-y-auto">
         <div className="w-full max-w-2xl px-6 pb-12">
           <StepIndicator />
-          <div>
-            <h2 className="text-lg font-semibold text-text-primary mb-1">Pick your feeds</h2>
-            <p className="text-sm text-text-muted mb-7 leading-relaxed">
-              Subscribe to research feeds relevant to your thesis. Toggle any feed on or off.{' '}
-              <span className="text-[11px] font-mono text-text-muted">FR-MT-51 · Step 3</span>
-            </p>
-            {feeds.length === 0 && (
-              <p className="text-sm text-text-muted">No feeds available in the catalog yet.</p>
-            )}
-            {Object.entries(grouped).map(([cat, feeds]) => (
-              <div key={cat} className="mb-6">
-                <h3 className="text-[11px] font-semibold uppercase tracking-widest text-text-muted mb-3">{cat}</h3>
-                <div className="grid grid-cols-2 gap-2.5">
-                  {feeds.map(feed => (
-                    <div
-                      key={feed.id}
-                      className={`border rounded-xl px-4 py-3.5 flex items-center gap-3 transition-all ${feed.subscribed ? 'border-accent/40 bg-accent/[0.04]' : 'border-border-default bg-transparent'}`}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-semibold text-text-primary truncate">{feed.name}</div>
-                      </div>
-                      <button
-                        onClick={() => handleToggleFeed(feed)}
-                        disabled={toggling === feed.id}
-                        className={`shrink-0 w-16 h-7 rounded-lg text-[11px] font-semibold transition-all ${feed.subscribed ? 'bg-accent text-white hover:bg-accent/90' : 'border border-border-default text-text-muted hover:border-border-hover'} disabled:opacity-50`}
-                      >
-                        {toggling === feed.id ? '…' : feed.subscribed ? 'On' : 'Off'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-            {error && <p className="text-danger text-xs mt-4">{error}</p>}
-            <div className="flex items-center justify-between mt-6">
-              <button onClick={() => setStep(2)} className="px-4 py-2 rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors">
-                ← Back
-              </button>
-              <button onClick={() => setStep(4)} className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors">
-                Continue →
-              </button>
-            </div>
-          </div>
+          <DiscoveryStep
+            runId={discoveryRunId}
+            thesisText={thesisTitle}
+            onApply={handleDiscoveryApply}
+            onSkip={() => setStep(4)}
+          />
         </div>
       </div>
     )

@@ -24,12 +24,17 @@ from routers import (
     research,
     onboarding,
     poll,
-    sources,
 )
+
+try:
+    from routers import sources as _sources_router  # requires extractor/providers
+    _sources_mod = _sources_router
+except ImportError:
+    _sources_mod = None
 from routers.profile import templates_router
 from routers.internal import cleanup_old_articles
 from scheduler import start_scheduler, stop_scheduler
-from sse import _sse_queues, broadcast_new_article
+from sse import _sse_queues
 
 # ---------------------------------------------------------------------------
 # Structured logging
@@ -76,7 +81,8 @@ app.include_router(profile.router)
 app.include_router(research.router)
 app.include_router(onboarding.router)
 app.include_router(poll.router)
-app.include_router(sources.router)
+if _sources_mod is not None:
+    app.include_router(_sources_mod.router)
 app.include_router(discovery.router)
 app.include_router(templates_router)
 

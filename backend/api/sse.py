@@ -8,8 +8,13 @@ from typing import Dict
 _sse_queues: Dict[int, Dict[str, asyncio.Queue]] = {}
 
 
-async def broadcast_new_article(article_data: dict, user_id: int) -> None:
-    message = {"type": "new_article", "data": article_data}
+async def broadcast_to_user(message: dict, user_id: int) -> None:
+    """Broadcast any message dict to all active SSE connections for a user.
+
+    Used for job-progress events (discovery:expanding, discovery:done, …) as
+    well as the specialised new_article broadcast below. Dead clients are
+    cleaned up in the same pass.
+    """
     user_queues = _sse_queues.get(user_id)
     if not user_queues:
         return
@@ -21,3 +26,7 @@ async def broadcast_new_article(article_data: dict, user_id: int) -> None:
             dead_clients.append(client_id)
     for client_id in dead_clients:
         user_queues.pop(client_id, None)
+
+
+async def broadcast_new_article(article_data: dict, user_id: int) -> None:
+    await broadcast_to_user({"type": "new_article", "data": article_data}, user_id)

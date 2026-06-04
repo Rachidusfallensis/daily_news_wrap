@@ -28,12 +28,15 @@ from routers.articles import _title_fingerprint, _pick
 from embedder import embed_article_async
 from sse import broadcast_new_article
 
-_extractor_dir = os.path.join(os.path.dirname(__file__), "..", "..", "extractor")
-if _extractor_dir not in sys.path:
-    sys.path.insert(0, _extractor_dir)
-
-from providers import PROVIDER_REGISTRY  # noqa: E402
-from providers.base import ResolvedSource  # noqa: E402
+try:
+    _extractor_dir = os.path.join(os.path.dirname(__file__), "..", "..", "extractor")
+    if _extractor_dir not in sys.path:
+        sys.path.insert(0, _extractor_dir)
+    from providers import PROVIDER_REGISTRY  # noqa: E402
+    from providers.base import ResolvedSource  # noqa: E402
+except ImportError:
+    PROVIDER_REGISTRY = {}  # type: ignore[assignment]
+    ResolvedSource = None  # type: ignore[assignment,misc]
 
 router = APIRouter(prefix="/api/internal", tags=["internal"])
 
