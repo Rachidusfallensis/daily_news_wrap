@@ -1,11 +1,11 @@
-import { Rss, Sparkles, BarChart2, Network, BookOpen, Settings, LogOut, Bookmark, AlertTriangle, Users, FileText, Calendar, Layers, BookMarked } from 'lucide-react'
+import { Rss, Sparkles, BarChart2, Network, BookOpen, Settings, LogOut, Bookmark, AlertTriangle, Users, FileText, Calendar, Layers, BookMarked, Library } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import type { NotificationCounts } from '../types'
 import { useArticlesStore } from '../store/articles'
 import type { Feed } from '../types'
 import { usePolling } from '../hooks/usePolling'
 
-export type AppView = 'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography'
+export type AppView = 'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography' | 'notes'
 
 interface SidebarProps {
   currentView: AppView
@@ -144,6 +144,7 @@ export function Sidebar({
         <NavItem icon={FileText} label="Writing" active={currentView === 'write'} onClick={() => onViewChange('write')} />
         <NavItem icon={Calendar} label="Conferences" active={currentView === 'conferences'} count={notifications.urgent_deadlines} onClick={() => handleNavClick('conferences', 'conferences')} />
         <NavItem icon={BookMarked} label="Bibliography" active={currentView === 'bibliography'} onClick={() => onViewChange('bibliography')} />
+        <NavItem icon={Library} label="Local Notes" active={currentView === 'notes'} onClick={() => onViewChange('notes')} />
         <NavItem icon={BarChart2} label="Stats" active={currentView === 'stats'} onClick={() => onViewChange('stats')} />
       </div>
 

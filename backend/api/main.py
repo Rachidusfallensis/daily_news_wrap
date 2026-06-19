@@ -34,6 +34,7 @@ from routers import (
     admin,
     internal,
     research,
+    notes,
 )
 from routers.internal import cleanup_old_articles
 from scheduler import start_scheduler, stop_scheduler
@@ -80,6 +81,7 @@ app.include_router(stats.router)
 app.include_router(admin.router)
 app.include_router(internal.router)
 app.include_router(research.router)
+app.include_router(notes.router)
 
 # ---------------------------------------------------------------------------
 # Default feeds seeded at startup

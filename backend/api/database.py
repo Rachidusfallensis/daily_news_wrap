@@ -145,6 +145,21 @@ class LiteratureReview(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
+class Note(Base):
+    """Local imported Markdown notes."""
+    __tablename__ = "notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String(255), unique=True, nullable=False, index=True)
+    title = Column(Text, nullable=True)
+    bibtex_key = Column(String(128), nullable=True)
+    theme = Column(String(128), nullable=True)
+    cluster = Column(String(128), nullable=True)
+    content_md = Column(Text, nullable=False)
+    last_modified = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
 class AuthSession(Base):
     """Persistent login sessions. One row per active login."""
     __tablename__ = "auth_sessions"
@@ -258,6 +273,9 @@ def init_db():
         "ALTER TABLE articles ADD COLUMN ss_paper_id VARCHAR(64)",
         "ALTER TABLE articles ADD COLUMN cited_by_corpus_count INTEGER DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS ix_articles_ss_paper_id ON articles(ss_paper_id)",
+        # Local Notes Integration
+        "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, filename TEXT UNIQUE NOT NULL, title TEXT, bibtex_key TEXT, theme TEXT, content_md TEXT NOT NULL, last_modified DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE INDEX IF NOT EXISTS ix_notes_filename ON notes(filename)",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:
@@ -266,3 +284,8 @@ def init_db():
                 conn.commit()
             except Exception:
                 pass  # column already exists
+        try:
+            conn.execute(text("ALTER TABLE notes ADD COLUMN cluster VARCHAR"))
+            conn.commit()
+        except Exception:
+            pass  # column already exists

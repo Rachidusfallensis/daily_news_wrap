@@ -650,3 +650,42 @@ class BulkUpdateHighlightsRequest(BaseModel):
         if v not in _VALID_THESIS_SECTIONS:
             raise ValueError(f"thesis_section must be one of {sorted(_VALID_THESIS_SECTIONS)}")
         return v
+
+
+# ---------------------------------------------------------------------------
+# Local Notes Integration
+# ---------------------------------------------------------------------------
+
+class NoteOut(BaseModel):
+    id: int
+    filename: str
+    title: Optional[str] = None
+    bibtex_key: Optional[str] = None
+    theme: Optional[str] = None
+    cluster: Optional[str] = None
+    content_md: Optional[str] = None
+    last_modified: Optional[datetime] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class NoteSyncItem(BaseModel):
+    filename: str
+    content_md: str
+    title: Optional[str] = None
+    bibtex_key: Optional[str] = None
+    theme: Optional[str] = None
+    cluster: Optional[str] = None
+    last_modified: Optional[datetime] = None
+
+
+class NoteSyncRequest(BaseModel):
+    notes: List[NoteSyncItem]
+
+
+class NoteSyncResponse(BaseModel):
+    added: int
+    updated: int
+    deleted: int
+

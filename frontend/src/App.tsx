@@ -17,6 +17,7 @@ import WriteAssistPanel from './components/WriteAssistPanel'
 import ConferenceRadar from './components/ConferenceRadar'
 import HighlightManager from './components/HighlightManager'
 import BibliographyPanel from './components/BibliographyPanel'
+import NotesView from './components/NotesView'
 import { useArticlesStore } from './store/articles'
 import { useSSE } from './hooks/useSSE'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
@@ -72,7 +73,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [showHelp, setShowHelp] = useState(false)
   const [feedManagerOpen, setFeedManagerOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
-  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography'>('feed')
+  const [appView, setAppView] = useState<'feed' | 'digest' | 'stats' | 'research' | 'litreview' | 'threats' | 'authors' | 'write' | 'conferences' | 'highlights' | 'bibliography' | 'notes'>('feed')
   const { selectedId, setSelectedId, markRead, markUnread, toggleBookmark, articles } = useArticlesStore()
 
   useSSE(onLogout)
@@ -260,7 +261,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               appView === 'write' ? 'Writing Assistant' :
               appView === 'highlights' ? 'Highlight Manager' :
               appView === 'bibliography' ? 'BibTeX Export' :
-              appView === 'conferences' ? 'Conference Radar' : 'Literature Review'
+              appView === 'conferences' ? 'Conference Radar' :
+              appView === 'notes' ? 'Local Notes' : 'Literature Review'
             }
             sidebarOpen={sidebarOpen}
             onToggleSidebar={() => setSidebarOpen(v => !v)}
@@ -306,6 +308,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               <BibliographyPanel />
             ) : appView === 'conferences' ? (
               <ConferenceRadar />
+            ) : appView === 'notes' ? (
+              <NotesView />
             ) : (
               <LitReviewView onSelectArticle={handleSelectArticle} />
             )}
