@@ -79,6 +79,9 @@ async def ask_article(
                                 "temperature": 0.3,
                             },
                         ) as resp:
+                            if resp.status_code != 200:
+                                await resp.aread()
+                                raise Exception(f"API Error {resp.status_code}: {resp.text}")
                             async for line in resp.aiter_lines():
                                 if not line.startswith("data: "):
                                     continue
@@ -107,6 +110,9 @@ async def ask_article(
                                 "options": {"temperature": 0.3, "num_predict": 1024},
                             },
                         ) as resp:
+                            if resp.status_code != 200:
+                                await resp.aread()
+                                raise Exception(f"Ollama Error {resp.status_code}: {resp.text}")
                             async for line in resp.aiter_lines():
                                 if not line.strip():
                                     continue

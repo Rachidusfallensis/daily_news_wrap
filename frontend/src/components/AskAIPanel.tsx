@@ -196,7 +196,7 @@ export function AskAIPanel({ articleId, onClose }: AskAIPanelProps) {
 
   return (
     <div
-      className="fixed z-[55] bottom-6 right-6 flex flex-col rounded-2xl shadow-2xl overflow-hidden bg-bg-secondary border border-border-strong"
+      className="fixed z-[55] bottom-6 right-6 flex flex-col rounded-2xl shadow-2xl overflow-hidden bg-bg-surface border border-border-strong"
       style={{
         width: 'min(440px, calc(100vw - 2rem))',
         height: 'min(540px, calc(100vh - 5rem))',

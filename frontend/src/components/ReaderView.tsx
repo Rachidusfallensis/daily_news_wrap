@@ -508,7 +508,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
       </div>
 
       {/* Main content area — horizontal split with optional Related panel */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden relative">
 
       {/* Paper view — dedicated layout for ArXiv papers */}
       {isPaper ? (
@@ -516,15 +516,6 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
       ) : (
         /* Scrollable content — regular articles */
         <div className="flex-1 overflow-hidden relative flex flex-col min-h-0">
-          {/* Highlight list overlay — absolute, doesn't affect flex flow */}
-          {showHighlightList && (
-            <HighlightList
-              highlights={articleHighlights}
-              onDelete={(id) => deleteHighlight(articleId, id)}
-              onClose={() => setShowHighlightList(false)}
-              onScrollTo={handleScrollToHighlight}
-            />
-          )}
 
           {/* Scrollable article — flex-1 */}
           <div
@@ -673,14 +664,25 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           </article>
           </div>
 
-          {/* Ask AI panel — at bottom of content area */}
-          {showAskPanel && (
-            <AskAIPanel
-              articleId={articleId}
-              onClose={() => setShowAskPanel(false)}
-            />
-          )}
         </div>
+      )}
+
+      {/* Highlight list overlay — absolute, doesn't affect flex flow */}
+      {showHighlightList && (
+        <HighlightList
+          highlights={articleHighlights}
+          onDelete={(id) => deleteHighlight(articleId, id)}
+          onClose={() => setShowHighlightList(false)}
+          onScrollTo={handleScrollToHighlight}
+        />
+      )}
+
+      {/* Ask AI panel — at bottom of content area */}
+      {showAskPanel && (
+        <AskAIPanel
+          articleId={articleId}
+          onClose={() => setShowAskPanel(false)}
+        />
       )}
 
       {/* Related articles panel — right sidebar */}
