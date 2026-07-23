@@ -14,6 +14,7 @@ interface ArticlesState {
   offset: number
   searchResults: ArticleListItem[]
   isSearching: boolean
+  searchQuery: string
 
   fetchArticles: (reset?: boolean) => Promise<void>
   fetchArticle: (id: number) => Promise<void>
@@ -24,6 +25,7 @@ interface ArticlesState {
   submitFeedback: (id: number, value: 1 | -1 | 0) => Promise<void>
   searchArticles: (query: string) => Promise<void>
   clearSearch: () => void
+  setSearchQuery: (query: string) => void
   setFilter: (partial: Partial<ArticleFilter>) => void
   prependArticle: (article: ArticleListItem) => void
   setSelectedId: (id: number | null) => void
@@ -75,6 +77,7 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
   offset: 0,
   searchResults: [],
   isSearching: false,
+  searchQuery: '',
 
   fetchArticles: async (reset = false) => {
     const state = get()
@@ -256,7 +259,9 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     }
   },
 
-  clearSearch: () => set({ searchResults: [], isSearching: false }),
+  clearSearch: () => set({ searchResults: [], isSearching: false, searchQuery: '' }),
+
+  setSearchQuery: (query: string) => set({ searchQuery: query }),
 
   setFilter: (partial: Partial<ArticleFilter>) => {
     set(state => ({

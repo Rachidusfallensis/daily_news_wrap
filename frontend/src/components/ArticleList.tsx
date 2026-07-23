@@ -22,14 +22,11 @@ interface ArticleListProps {
 }
 
 export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, onOpenProfile, currentView, onViewChange, onLogout }: ArticleListProps) {
-  const { articles, loading, hasMore, fetchArticles, filter, setFilter, markAllRead, searchArticles, clearSearch, searchResults, isSearching } = useArticlesStore()
+  const { articles, loading, hasMore, fetchArticles, filter, setFilter, markAllRead, searchResults, isSearching, searchQuery } = useArticlesStore()
 
   const [refreshing, setRefreshing] = useState(false)
   const [confirmingReadAll, setConfirmingReadAll] = useState(false)
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchOpen, setSearchOpen] = useState(false)
-  const searchInputRef = useRef<HTMLInputElement>(null)
 
   const handleMarkAllRead = useCallback(() => {
     if (!confirmingReadAll) {
@@ -45,43 +42,6 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, on
   useEffect(() => () => {
     if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current)
   }, [])
-
-  const openSearch = useCallback(() => {
-    setSearchOpen(true)
-    setTimeout(() => searchInputRef.current?.focus(), 50)
-  }, [])
-
-  const closeSearch = useCallback(() => {
-    setSearchOpen(false)
-    setSearchQuery('')
-    clearSearch()
-  }, [clearSearch])
-
-  // Debounced backend search
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current)
-    if (!searchQuery.trim()) {
-      clearSearch()
-      return
-    }
-    searchTimer.current = setTimeout(() => searchArticles(searchQuery.trim()), 300)
-    return () => { if (searchTimer.current) clearTimeout(searchTimer.current) }
-  }, [searchQuery])
-
-  // `/` key opens search (when not in an input)
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
-      if (e.key === '/') {
-        e.preventDefault()
-        openSearch()
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [openSearch])
 
   const touchStartY = useRef(0)
   const isPulling = useRef(false)

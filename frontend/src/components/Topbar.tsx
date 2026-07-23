@@ -1,13 +1,42 @@
-import { Search, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { Search, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { useArticlesStore } from '../store/articles'
 
 interface TopbarProps {
   breadcrumb: string
   sidebarOpen: boolean
   onToggleSidebar: () => void
-  onSearch?: (q: string) => void
 }
 
 export function Topbar({ breadcrumb, sidebarOpen, onToggleSidebar }: TopbarProps) {
+  const { searchQuery, setSearchQuery, searchArticles, clearSearch } = useArticlesStore()
+  
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current)
+    if (!searchQuery.trim()) {
+      clearSearch()
+      return
+    }
+    searchTimer.current = setTimeout(() => searchArticles(searchQuery.trim()), 300)
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current) }
+  }, [searchQuery, searchArticles, clearSearch])
+
+  // `/` key opens search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (e.key === '/') {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
   return (
     <div className="h-[48px] min-h-[48px] border-b border-border-subtle flex items-center px-5 gap-3 bg-bg-base">
       <button 
@@ -25,9 +54,21 @@ export function Topbar({ breadcrumb, sidebarOpen, onToggleSidebar }: TopbarProps
       </div>
 
       <div className="ml-auto flex items-center gap-1.5">
-        <div className="flex items-center gap-1.5 bg-bg-surface border border-border-default rounded-md px-3 py-1.5 text-[13px] text-text-muted max-w-[250px] cursor-text">
-          <Search size={13} />
-          <span>Rechercher…</span>
+        <div className="flex items-center gap-2 bg-bg-surface border border-border-default rounded-md px-3 py-1 text-[13px] text-text-primary focus-within:ring-1 focus-within:ring-accent-blue focus-within:border-accent-blue transition-all w-[250px] relative">
+          <Search size={14} className="text-text-muted flex-shrink-0" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            placeholder="Rechercher…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="bg-transparent border-none outline-none flex-1 placeholder:text-text-muted min-w-0"
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery('')} className="text-text-muted hover:text-text-primary">
+              <X size={14} />
+            </button>
+          )}
         </div>
       </div>
     </div>

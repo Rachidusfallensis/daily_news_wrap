@@ -35,3 +35,30 @@
   --shadow:    0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
   --shadow-md: 0 4px 12px rgba(0,0,0,.08), 0 2px 4px rgba(0,0,0,.04);
 }
+
+.dark {
+  /* Premium Vercel-like deep dark theme */
+  --bg:           #0A0A0A;
+  --bg-secondary: #111111;
+  --bg-hover:     #1E1E1E;
+  --bg-active:    #27272A;
+  --sidebar-bg:   #0A0A0A;
+
+  --border:       #27272A;
+  --border-strong:#3F3F46;
+
+  --text:         #FAFAFA;
+  --text-secondary:#A1A1AA;
+  --text-muted:   #71717A;
+
+  --accent:       #3B82F6;
+  --accent-light: #1D4ED8;
+
+  --success:      #10B981;  --success-bg: #064E3B;
+  --warning:      #F59E0B;  --warning-bg: #78350F;
+  --danger:       #EF4444;  --danger-bg:  #7F1D1D;
+  --purple:       #8B5CF6;  --purple-bg:  #4C1D95;
+
+  --shadow:    0 1px 3px rgba(0,0,0,.2), 0 1px 2px rgba(0,0,0,.15);
+  --shadow-md: 0 4px 12px rgba(0,0,0,.3), 0 2px 4px rgba(0,0,0,.2);
+}

@@ -15,6 +15,8 @@ import {
   ThumbsUp,
   ThumbsDown,
   Sparkles,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react'
 import { useArticlesStore } from '../store/articles'
 import { useHighlightsStore } from '../store/highlights'
@@ -26,6 +28,7 @@ import { HighlightList } from './HighlightList'
 import { AskAIPanel } from './AskAIPanel'
 import RelatedPanel from './RelatedPanel'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 
 // Heuristic: does this string look like HTML rather than plain text?
 // Checks for at least one block-level or common inline HTML tag.
@@ -397,7 +400,7 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
             className="hidden lg:flex p-1.5 rounded-lg hover:bg-bg-hover transition-colors text-text-secondary hover:text-text-primary"
             title={sidebarOpen ? 'Hide sidebar  [' : 'Show sidebar  ['}
           >
-            {sidebarOpen ? <PanelLeftCloseIcon /> : <PanelLeftOpenIcon />}
+            {sidebarOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeftOpen className="w-5 h-5" />}
           </button>
 
           {/* Back button (mobile) */}
@@ -559,9 +562,9 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
 
             {/* Tags */}
             {article.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-4">
+              <div className="flex flex-wrap gap-2 mb-5">
                 {article.tags.map(tag => (
-                  <span key={tag} className="px-2 py-0.5 bg-bg-elevated rounded-full text-xs text-text-muted font-medium">
+                  <span key={tag} className="px-2.5 py-0.5 bg-bg-surface border border-border-subtle rounded-md text-xs text-text-secondary font-medium tracking-wide">
                     {tag}
                   </span>
                 ))}
@@ -569,16 +572,16 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
             )}
 
             {/* Title */}
-            <h1 className="text-2xl font-bold leading-tight text-text-primary mb-3">
+            <h1 className="text-3xl font-bold tracking-tight leading-tight text-text-primary mb-4">
               {article.title}
             </h1>
 
             {/* Meta */}
-            <div className="flex flex-wrap items-center gap-1.5 text-sm text-text-muted mb-5 pb-5 border-b border-border-subtle">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-text-muted mb-8 pb-6 border-b border-border-subtle">
               {article.author && (
-                <span className="font-medium text-text-secondary">{article.author}</span>
+                <span className="font-semibold text-text-secondary">{article.author}</span>
               )}
-              {article.author && (publishedDate || relativeDate) && <span>·</span>}
+              {article.author && (publishedDate || relativeDate) && <span className="opacity-40">•</span>}
               {publishedDate && (
                 <span title={relativeDate || ''}>{publishedDate}</span>
               )}
@@ -589,24 +592,27 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
 
             {/* AI Summary */}
             {article.summary_bullets.length > 0 && (
-              <div className="mb-6 p-4 bg-bg-surface rounded-xl border border-border-subtle">
-                <p className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2.5">
-                  AI Summary
-                </p>
-                <ul className="space-y-1.5">
-                  {article.summary_bullets.map((bullet, i) => (
-                    <li key={i} className="text-sm text-text-secondary leading-relaxed flex gap-2">
-                      <span className="text-accent flex-shrink-0 mt-0.5">›</span>
-                      <span>{bullet}</span>
-                    </li>
-                  ))}
-                </ul>
-                {article.reason && (
-                  <p className="mt-3 pt-3 border-t border-border-subtle text-xs text-text-muted italic">
-                    {article.reason}
-                  </p>
-                )}
-              </div>
+              <Card className="mb-8 border-accent-blue/20 bg-accent-blue/5 shadow-sm">
+                <CardHeader className="pb-3 flex flex-row items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-accent-blue" />
+                  <CardTitle className="text-sm uppercase tracking-widest text-accent-blue">AI Summary</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ul className="space-y-2">
+                    {article.summary_bullets.map((bullet, i) => (
+                      <li key={i} className="text-[14.5px] text-text-secondary leading-relaxed flex gap-2.5">
+                        <span className="text-accent-blue flex-shrink-0 mt-[2px] font-bold">›</span>
+                        <span>{bullet}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {article.reason && (
+                    <p className="mt-4 pt-3 border-t border-accent-blue/10 text-xs text-text-muted italic leading-relaxed">
+                      {article.reason}
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
             )}
 
             {/* Hero image */}

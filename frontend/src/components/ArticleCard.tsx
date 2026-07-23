@@ -62,9 +62,9 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
   return (
     <div
       className={cn(
-        "relative overflow-hidden cursor-pointer select-none border-b border-border-subtle transition-colors duration-150",
-        selected ? "bg-bg-elevated border-l-2 border-l-accent-blue" : "hover:bg-bg-hover",
-        isRead && "opacity-60"
+        "relative overflow-hidden cursor-pointer select-none border-b border-border-subtle transition-all duration-200",
+        selected ? "bg-bg-elevated border-l-[3px] border-l-accent-blue" : "hover:bg-bg-hover",
+        isRead && "opacity-65 grayscale-[0.2]"
       )}
       style={{
         transform: swipeOffset !== 0 ? `translateX(${swipeOffset}px)` : undefined,
@@ -88,7 +88,7 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
         </div>
       )}
 
-      <div className="p-3">
+      <div className="p-4">
         <ScoreBar score={article.score} />
 
         {/* Tags + research badges */}
@@ -97,7 +97,7 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
             {article.tags.slice(0, 3).map(tag => (
               <span
                 key={tag}
-                className="px-1.5 py-0.5 bg-bg-elevated rounded text-xs text-text-muted font-medium"
+                className="px-2 py-0.5 bg-bg-surface border border-border-subtle rounded-md text-[11px] text-text-secondary font-medium"
               >
                 {tag}
               </span>
@@ -124,7 +124,7 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
         {/* Title */}
         <h3
           className={`
-            text-sm font-semibold leading-snug mb-1 line-clamp-2
+            text-[15px] font-semibold tracking-tight leading-snug mb-2 line-clamp-2
             ${isRead ? 'text-text-secondary' : 'text-text-primary'}
           `}
         >
@@ -135,8 +135,8 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
         {article.summary_bullets.length > 0 && (
           <ul className="mb-2 space-y-0.5">
             {article.summary_bullets.slice(0, 2).map((bullet, i) => (
-              <li key={i} className="text-xs text-text-secondary leading-relaxed flex gap-1">
-                <span className="text-text-muted flex-shrink-0">•</span>
+              <li key={i} className="text-[13px] text-text-secondary leading-relaxed flex gap-1.5">
+                <span className="text-border-strong flex-shrink-0 mt-[1px]">›</span>
                 <span className="line-clamp-1">{bullet}</span>
               </li>
             ))}
@@ -144,11 +144,11 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
         )}
 
         {/* Meta */}
-        <div className="flex items-center justify-between mt-1">
+        <div className="flex items-center justify-between mt-3 pt-3 border-t border-border-subtle">
           <div className="flex items-center gap-2 text-xs text-text-muted min-w-0">
-            <span className="truncate font-medium">{article.feed_name}</span>
-            <span className="flex-shrink-0">·</span>
-            <span className="flex-shrink-0 font-mono tracking-tight">{relativeDate}</span>
+            <span className="truncate font-medium text-text-secondary">{article.feed_name}</span>
+            <span className="flex-shrink-0 opacity-50">•</span>
+            <span className="flex-shrink-0 tracking-tight">{relativeDate}</span>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0 ml-2">
             {article.user_feedback === 1 && (

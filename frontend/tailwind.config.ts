@@ -41,8 +41,8 @@ const config: Config = {
         'purple-bg': 'var(--purple-bg)',
       },
       fontFamily: {
-        sans: ['"DM Sans"', 'system-ui', '-apple-system', 'sans-serif'],
-        mono: ['"DM Mono"', 'monospace'],
+        sans: ['"Geist Sans"', 'system-ui', '-apple-system', 'sans-serif'],
+        mono: ['"Geist Mono"', 'monospace'],
         serif: ['Lora', 'Georgia', 'serif'],
       },
       fontSize: {
