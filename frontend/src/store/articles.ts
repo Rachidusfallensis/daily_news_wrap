@@ -1,4 +1,7 @@
 import { create } from 'zustand'
+import { apiFetch } from '@/lib/api-client'
+import { ArticleListItemSchema, ArticleListResponseSchema, ArticleSchema } from '@/schemas/article.schema'
+import { z } from 'zod'
 import type { Article, ArticleFilter, ArticleListItem } from '../types'
 
 interface ArticlesState {
@@ -82,9 +85,7 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
 
     try {
       const qs = buildQueryParams(state.filter, PAGE_SIZE, offset)
-      const resp = await fetch(`/api/articles?${qs}`)
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      const data: ArticleListItem[] = await resp.json()
+      const data = await apiFetch(`/api/articles?${qs}`, ArticleListResponseSchema)
 
       set(prev => {
         // Deduplicate on append (score changes between pages can cause overlaps)
@@ -106,10 +107,8 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
   fetchArticle: async (id: number) => {
     set({ selectedId: id, selectedArticle: null })
     try {
-      const resp = await fetch(`/api/articles/${id}`)
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      const data: Article = await resp.json()
-      set({ selectedArticle: data })
+      const data = await apiFetch(`/api/articles/${id}`, ArticleSchema)
+      set({ selectedArticle: data as Article })
     } catch (err) {
       console.error('Failed to fetch article:', err)
     }
@@ -141,7 +140,7 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     })
 
     try {
-      await fetch(`/api/articles/${id}/read`, { method: 'POST' })
+      await apiFetch(`/api/articles/${id}/read`, z.any(), { method: 'POST', skipValidation: true })
     } catch (err) {
       console.error('Failed to mark article as read:', err)
       get().fetchArticles(true)
@@ -157,7 +156,7 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     }))
 
     try {
-      await fetch(`/api/articles/${id}/unread`, { method: 'POST' })
+      await apiFetch(`/api/articles/${id}/unread`, z.any(), { method: 'POST', skipValidation: true })
     } catch (err) {
       console.error('Failed to mark article as unread:', err)
       get().fetchArticles(true)
@@ -174,7 +173,7 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
       params.set('min_score', String(state.filter.minScore))
     }
     try {
-      await fetch(`/api/articles/read-all?${params}`, { method: 'POST' })
+      await apiFetch(`/api/articles/read-all?${params}`, z.any(), { method: 'POST', skipValidation: true })
       get().fetchArticles(true)
     } catch (err) {
       console.error('Failed to mark all as read:', err)
@@ -207,10 +206,8 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     })
 
     try {
-      const resp = await fetch(`/api/articles/${id}/bookmark`, { method: 'POST' })
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const data = await apiFetch(`/api/articles/${id}/bookmark`, z.object({ bookmarked: z.boolean() }), { method: 'POST' })
       // Server response confirms the new bookmarked state — sync it back
-      const data = await resp.json()
       set(state => ({
         articles: state.articles.map(a => a.id === id ? { ...a, bookmarked: data.bookmarked } : a),
         selectedArticle: state.selectedArticle?.id === id
@@ -233,10 +230,10 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
         : state.selectedArticle,
     }))
     try {
-      await fetch(`/api/articles/${id}/feedback`, {
+      await apiFetch(`/api/articles/${id}/feedback`, z.any(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value }),
+        skipValidation: true,
       })
     } catch (err) {
       console.error('Failed to submit feedback:', err)
@@ -251,9 +248,7 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     set({ isSearching: true })
     try {
       const params = new URLSearchParams({ search: query, limit: '50', sort: 'score' })
-      const resp = await fetch(`/api/articles?${params}`)
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      const data: ArticleListItem[] = await resp.json()
+      const data = await apiFetch(`/api/articles?${params}`, ArticleListResponseSchema)
       set({ searchResults: data, isSearching: false })
     } catch (err) {
       console.error('Search failed:', err)

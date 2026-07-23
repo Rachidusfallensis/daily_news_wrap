@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { Bookmark, BookmarkCheck } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import type { ArticleListItem } from '../types'
 import { ScoreBar } from './ScoreBar'
 import { ContribTypeBadge } from './ContribTypeBadge'
@@ -60,16 +61,11 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
 
   return (
     <div
-      className={`
-        relative overflow-hidden cursor-pointer select-none
-        border-b border-border-subtle
-        transition-colors duration-150
-        ${selected
-          ? 'bg-bg-elevated border-l-2 border-l-accent-blue'
-          : 'hover:bg-bg-hover'
-        }
-        ${isRead ? 'opacity-60' : ''}
-      `}
+      className={cn(
+        "relative overflow-hidden cursor-pointer select-none border-b border-border-subtle transition-colors duration-150",
+        selected ? "bg-bg-elevated border-l-2 border-l-accent-blue" : "hover:bg-bg-hover",
+        isRead && "opacity-60"
+      )}
       style={{
         transform: swipeOffset !== 0 ? `translateX(${swipeOffset}px)` : undefined,
         transition: swiping ? 'none' : 'transform 0.2s ease',

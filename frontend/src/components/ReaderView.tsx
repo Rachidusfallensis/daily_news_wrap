@@ -25,6 +25,7 @@ import { HighlightPopover } from './HighlightPopover'
 import { HighlightList } from './HighlightList'
 import { AskAIPanel } from './AskAIPanel'
 import RelatedPanel from './RelatedPanel'
+import { Skeleton } from '@/components/ui/skeleton'
 
 // Heuristic: does this string look like HTML rather than plain text?
 // Checks for at least one block-level or common inline HTML tag.
@@ -327,8 +328,39 @@ export function ReaderView({ articleId, onBack, sidebarOpen, onToggleSidebar, on
           onBack={onBack}
           loading
         />
-        <div className="flex items-center justify-center flex-1 bg-bg-base">
-          <Loader2 className="w-6 h-6 animate-spin text-text-muted" />
+        <div className="flex-1 bg-bg-base p-8 overflow-hidden">
+          <div className="max-w-2xl mx-auto mt-4">
+            {/* Tags skeleton */}
+            <div className="flex gap-2 mb-6">
+              <Skeleton className="h-5 w-16 rounded-full" />
+              <Skeleton className="h-5 w-24 rounded-full" />
+            </div>
+            
+            {/* Title skeleton */}
+            <Skeleton className="h-9 w-5/6 mb-3" />
+            <Skeleton className="h-9 w-4/6 mb-6" />
+            
+            {/* Meta skeleton */}
+            <div className="flex gap-2 mb-10 pb-6 border-b border-border-subtle">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-4 w-24" />
+            </div>
+
+            {/* Body skeleton */}
+            <div className="space-y-4 mb-8">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-11/12" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-4/5" />
+            </div>
+            <div className="space-y-4">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-10/12" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-3/4" />
+            </div>
+          </div>
         </div>
       </div>
     )
