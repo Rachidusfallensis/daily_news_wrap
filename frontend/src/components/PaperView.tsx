@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { format } from 'date-fns'
 import {
   ExternalLink,
@@ -14,6 +14,9 @@ import {
   Tag,
 } from 'lucide-react'
 import type { Article } from '../types'
+import { HighlightPopover } from './HighlightPopover'
+import { useHighlightsStore } from '../store/highlights'
+import { useTextSelection, applyHighlights } from '../hooks/useTextSelection'
 
 interface PaperViewProps {
   article: Article
@@ -82,6 +85,45 @@ function ScorePill({ score }: { score: number | null }) {
 export function PaperView({ article, fontSize }: PaperViewProps) {
   const [pdfMode, setPdfMode] = useState<PdfMode>('none')
   const isIOS = useMemo(() => detectIOS(), [])
+
+  const { highlights, fetchHighlights, createHighlight, patchHighlight } = useHighlightsStore()
+  const articleHighlights = highlights[article.id] ?? []
+
+  useEffect(() => {
+    fetchHighlights(article.id)
+  }, [article.id])
+
+  const {
+    containerRef: contentRef,
+    pendingSelection,
+    setPendingSelection,
+    editingHighlight,
+    setEditingHighlight,
+    noteTooltip,
+  } = useTextSelection(articleHighlights)
+
+  const handleSaveHighlight = async (color: string, note: string, thesisSection?: string | null) => {
+    if (editingHighlight) {
+      const h = editingHighlight.highlight
+      setEditingHighlight(null)
+      await patchHighlight(h.id, {
+        color,
+        note: note || null,
+        thesis_section: thesisSection ?? null,
+      })
+      return
+    }
+    if (!pendingSelection) return
+    setPendingSelection(null)
+    window.getSelection()?.removeAllRanges()
+    await createHighlight(article.id, {
+      selected_text: pendingSelection.selectedText,
+      prefix_context: pendingSelection.prefixContext,
+      suffix_context: pendingSelection.suffixContext,
+      color,
+      note: note || undefined,
+    })
+  }
 
   const paperId = arxivIdFromUrl(article.url)
   const pdfUrl = paperId ? `https://arxiv.org/pdf/${paperId}` : null
@@ -261,12 +303,12 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
               >
                 Abstract
               </p>
-              <p
+              <div
+                ref={contentRef}
                 className="text-text-primary leading-relaxed"
                 style={{ lineHeight: 1.85, fontSize: '0.93em' }}
-              >
-                {article.content_text || 'Abstract not available.'}
-              </p>
+                dangerouslySetInnerHTML={{ __html: applyHighlights(article.content_text || 'Abstract not available.', articleHighlights) }}
+              />
             </div>
           </section>
 
@@ -339,6 +381,52 @@ export function PaperView({ article, fontSize }: PaperViewProps) {
               arXiv
             </a>
           </div>
+
+          {/* ── Highlighting components ── */}
+          {(pendingSelection || editingHighlight) && (
+            <HighlightPopover
+              position={editingHighlight ? editingHighlight.position : pendingSelection!.position}
+              selectedText={editingHighlight ? editingHighlight.highlight.selected_text : pendingSelection!.selectedText}
+              highlight={editingHighlight?.highlight}
+              onSave={handleSaveHighlight}
+              onClose={() => { setPendingSelection(null); setEditingHighlight(null) }}
+            />
+          )}
+
+          {noteTooltip && (
+            <div
+              className="fixed z-[70] pointer-events-none"
+              style={{
+                left: noteTooltip.x,
+                top: noteTooltip.y - 10,
+                transform: 'translateX(-50%) translateY(-100%)',
+              }}
+            >
+              <div
+                className="relative rounded-xl px-3 py-2 text-xs leading-relaxed shadow-2xl"
+                style={{
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid var(--border-strong)',
+                  color: 'var(--text-muted)',
+                  maxWidth: 220,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                }}
+              >
+                {noteTooltip.note}
+                <div
+                  className="absolute left-1/2 -translate-x-1/2"
+                  style={{
+                    bottom: -6,
+                    width: 0,
+                    height: 0,
+                    borderLeft: '6px solid transparent',
+                    borderRight: '6px solid transparent',
+                    borderTop: '6px solid var(--border-strong)',
+                  }}
+                />
+              </div>
+            </div>
+          )}
 
         </div>
       </div>
