@@ -7,6 +7,7 @@ from typing import Any, Callable, List, Optional
 from urllib.parse import quote_plus, urlparse
 
 import httpx
+import nh3
 import trafilatura
 from bs4 import BeautifulSoup, Tag
 from fastapi import FastAPI
@@ -633,6 +634,46 @@ def html_to_text(html: str) -> str:
         return ""
 
 
+# ---------------------------------------------------------------------------
+# HTML sanitization — allowlist applied to ALL extracted content before storage.
+# The client renders content_html via dangerouslySetInnerHTML, so anything that
+# survives here can run in the reader (event-handler attributes, javascript:
+# URLs, <iframe>/<object>, etc.). nh3 (ammonia) strips everything not listed.
+# ---------------------------------------------------------------------------
+
+_ALLOWED_TAGS: set[str] = {
+    "a", "abbr", "b", "blockquote", "br", "code", "div", "em",
+    "figure", "figcaption", "h1", "h2", "h3", "h4", "h5", "h6", "hr",
+    "i", "img", "li", "mark", "ol", "p", "pre", "span", "strong",
+    "sub", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul",
+}
+
+_ALLOWED_ATTRS: dict[str, set[str]] = {
+    "a": {"href", "title", "target"},
+    "img": {"src", "alt", "title", "width", "height"},
+    "td": {"colspan", "rowspan"},
+    "th": {"colspan", "rowspan"},
+    # Class kept globally for reader styling hooks (arxiv-paper, paper-abstract…).
+    "*": {"class"},
+}
+
+
+def sanitize_html(html: Optional[str]) -> Optional[str]:
+    """Strip dangerous markup from extracted article HTML before it is stored
+    and later rendered client-side. Allowlist-based: unlisted tags/attributes,
+    event handlers and non-http(s)/mailto URL schemes are removed. Returns the
+    input unchanged when empty/None."""
+    if not html:
+        return html
+    return nh3.clean(
+        html,
+        tags=_ALLOWED_TAGS,
+        attributes=_ALLOWED_ATTRS,
+        url_schemes={"http", "https", "mailto"},
+        link_rel="noopener noreferrer",
+    )
+
+
 def clean_readability_html(raw: str, base_url: str) -> str:
     """Resolve relative URLs and remove readability's outer wrapper div."""
     try:
@@ -1012,7 +1053,7 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
                 final_title = resolve_title(extracted_title, req.rss_title, content_text)
                 return ExtractResponse(
                     title=final_title,
-                    content_html=content_html,
+                    content_html=sanitize_html(content_html),
                     content_text=content_text,
                     images=[],
                     author=author,
@@ -1040,7 +1081,7 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
                 final_title = resolve_title(None, req.rss_title, abstract)
                 return ExtractResponse(
                     title=final_title,
-                    content_html=f"<p>{abstract}</p>",
+                    content_html=sanitize_html(f"<p>{abstract}</p>"),
                     content_text=abstract,
                     images=[],
                     author=None,
@@ -1161,7 +1202,7 @@ async def extract(req: ExtractRequest) -> ExtractResponse:
 
         return ExtractResponse(
             title=final_title,
-            content_html=content_html,
+            content_html=sanitize_html(content_html),
             content_text=content_text,
             images=images[:10],
             author=author,

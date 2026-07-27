@@ -10,6 +10,7 @@ interface ArticlesState {
   selectedArticle: Article | null
   filter: ArticleFilter
   loading: boolean
+  error: string | null
   hasMore: boolean
   offset: number
   searchResults: ArticleListItem[]
@@ -73,6 +74,7 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     ariseOnly: false,
   },
   loading: false,
+  error: null,
   hasMore: true,
   offset: 0,
   searchResults: [],
@@ -84,7 +86,7 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
     if (state.loading) return
 
     const offset = reset ? 0 : state.offset
-    set({ loading: true })
+    set({ loading: true, error: null })
 
     try {
       const qs = buildQueryParams(state.filter, PAGE_SIZE, offset)
@@ -99,11 +101,15 @@ export const useArticlesStore = create<ArticlesState>((set, get) => ({
           hasMore: data.length === PAGE_SIZE,
           offset: offset + data.length,
           loading: false,
+          error: null,
         }
       })
     } catch (err) {
       console.error('Failed to fetch articles:', err)
-      set({ loading: false })
+      set({
+        loading: false,
+        error: err instanceof Error ? err.message : 'Impossible de charger les articles.',
+      })
     }
   },
 

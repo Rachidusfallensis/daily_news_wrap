@@ -22,7 +22,7 @@ interface ArticleListProps {
 }
 
 export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, onOpenProfile, currentView, onViewChange, onLogout }: ArticleListProps) {
-  const { articles, loading, hasMore, fetchArticles, filter, setFilter, markAllRead, searchResults, isSearching, searchQuery } = useArticlesStore()
+  const { articles, loading, error, hasMore, fetchArticles, filter, setFilter, markAllRead, searchResults, isSearching, searchQuery } = useArticlesStore()
 
   const [refreshing, setRefreshing] = useState(false)
   const [confirmingReadAll, setConfirmingReadAll] = useState(false)
@@ -263,8 +263,28 @@ export function ArticleList({ feeds, onSelect, selectedId, onOpenFeedManager, on
       {/* Feed view: empty state + list */}
       {currentView === 'feed' && (
         <>
+          {/* Error state — distinct from "no articles" */}
+          {error && !isSearchActive && displayedArticles.length === 0 && (
+            <div className="flex flex-col items-center justify-center flex-1 text-center p-8">
+              <div className="text-4xl mb-3 opacity-30">⚠</div>
+              <p className="text-sm font-medium text-text-secondary mb-1">
+                Échec du chargement
+              </p>
+              <p className="text-xs text-text-muted leading-relaxed max-w-[220px] mb-4">
+                {error}
+              </p>
+              <button
+                onClick={() => fetchArticles(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border-default text-xs text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Réessayer
+              </button>
+            </div>
+          )}
+
           {/* Empty state */}
-          {!loading && !isSearching && displayedArticles.length === 0 && (
+          {!error && !loading && !isSearching && displayedArticles.length === 0 && (
             <div className="flex flex-col items-center justify-center flex-1 text-center p-8">
               <div className="text-4xl mb-3 opacity-20">◎</div>
               <p className="text-sm font-medium text-text-secondary mb-1">

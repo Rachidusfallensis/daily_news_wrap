@@ -19,6 +19,7 @@ app = FastAPI(title="Baṣīra Scorer")
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 SCORER_MODEL = os.getenv("SCORER_MODEL", "google/gemini-flash-1.5")
+print(f"🚀 Baṣīra Scorer initialized with model: {SCORER_MODEL}", flush=True)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host-gateway:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 UNI_OLLAMA_URL = os.getenv("UNI_OLLAMA_URL", "")

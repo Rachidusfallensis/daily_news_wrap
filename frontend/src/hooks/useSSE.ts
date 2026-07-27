@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { ArticleListItem } from '../types'
+import { ArticleListItemSchema } from '../schemas/article.schema'
 import { useArticlesStore } from '../store/articles'
 
 export function useSSE(onUnauthorized?: () => void) {
@@ -26,8 +26,15 @@ export function useSSE(onUnauthorized?: () => void) {
       try {
         const message = JSON.parse(event.data)
         if (message.type === 'new_article' && message.data) {
-          const article = message.data as ArticleListItem
-          prependArticle(article)
+          // Validate the payload rather than trusting it — a malformed field
+          // (bad date, unknown contribution_type, missing array) would otherwise
+          // crash the list on render. Drop silently on failure.
+          const parsed = ArticleListItemSchema.safeParse(message.data)
+          if (parsed.success) {
+            prependArticle(parsed.data)
+          } else {
+            console.error('[SSE] Dropped malformed new_article payload:', parsed.error.issues)
+          }
         }
       } catch (err) {
         console.error('Failed to parse SSE message:', err)
