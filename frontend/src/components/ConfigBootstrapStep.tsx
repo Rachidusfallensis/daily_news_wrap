@@ -222,10 +222,24 @@ export default function ConfigBootstrapStep({ thesisText, onNext, onSkip, saving
       </div>
 
       <div className="flex items-center justify-between mt-6">
-        <button onClick={onSkip} disabled={saving} className="px-4 py-2 rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50">
-          {isDegraded ? "Skip — I'll configure manually" : 'Skip'}
+        <button
+          onClick={onSkip}
+          disabled={saving}
+          className={isDegraded
+            ? "px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors"
+            : "px-4 py-2 rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+          }
+        >
+          {isDegraded ? "Skip — configure manually" : 'Skip'}
         </button>
-        <button onClick={handleContinue} disabled={saving} className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors">
+        <button
+          onClick={handleContinue}
+          disabled={saving}
+          className={isDegraded
+            ? "px-4 py-2 rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+            : "px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors"
+          }
+        >
           {saving ? 'Saving…' : 'Continue →'}
         </button>
       </div>

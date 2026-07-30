@@ -254,6 +254,110 @@ def test_apply_empty_pack():
     assert body["applied"] is True
 
 
+def _insert_discovery_run(user_id: int, status: str = "done", pack_json: str | None = None) -> int:
+    """Helper: insert a discovery_runs row and return its id."""
+    import json as _json
+    from datetime import datetime, timezone
+    from sqlalchemy import text
+    if pack_json is None:
+        pack_json = _json.dumps({"sources": [_ITEM_SOURCE], "venues": [_ITEM_VENUE], "authors": [_ITEM_AUTHOR]})
+    with engine.connect() as conn:
+        result = conn.execute(
+            text(
+                "INSERT INTO discovery_runs (user_id, expand_input, status, pack_result_json, created_at) "
+                "VALUES (:uid, :h, :status, :pack, datetime('now'))"
+            ),
+            {"uid": user_id, "h": "testhash", "status": status, "pack": pack_json},
+        )
+        conn.commit()
+        return result.lastrowid
+
+
+def test_run_apply_sets_status_applied():
+    """AC4: POST /api/discovery/run/{id}/apply marks run as status=applied + applied_at."""
+    _reset_db()
+    client = _get_client()
+    headers = _auth_headers(client)
+    run_id = _insert_discovery_run(user_id=1)
+
+    resp = client.post(f"/api/discovery/run/{run_id}/apply", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["applied"] is True
+
+    with engine.connect() as conn:
+        from sqlalchemy import text
+        row = conn.execute(
+            text("SELECT status, applied_at FROM discovery_runs WHERE id = :rid"),
+            {"rid": run_id},
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "applied", f"Expected 'applied', got '{row[0]}'"
+    assert row[1] is not None, "applied_at should be set"
+
+
+def test_run_apply_idempotent():
+    """Applying the same run twice returns counts={} on second call."""
+    _reset_db()
+    client = _get_client()
+    headers = _auth_headers(client)
+    run_id = _insert_discovery_run(user_id=1)
+
+    client.post(f"/api/discovery/run/{run_id}/apply", headers=headers)
+    resp2 = client.post(f"/api/discovery/run/{run_id}/apply", headers=headers)
+    assert resp2.status_code == 200
+    assert resp2.json()["counts"] == {}
+
+
+def test_run_apply_ownership_isolation():
+    """User B cannot apply User A's run (NFR-T1)."""
+    _reset_db()
+    client = _get_client()
+    headers_a = _auth_headers(client, user_id=1)
+    run_id = _insert_discovery_run(user_id=1)
+
+    headers_b = _auth_headers(client, user_id=2)
+    resp = client.post(f"/api/discovery/run/{run_id}/apply", headers=headers_b)
+    assert resp.status_code == 404, f"Expected 404, got {resp.status_code}"
+
+
+def test_run_apply_wrong_status():
+    """Applying a pending run returns 409."""
+    _reset_db()
+    client = _get_client()
+    headers = _auth_headers(client)
+    run_id = _insert_discovery_run(user_id=1, status="pending")
+
+    resp = client.post(f"/api/discovery/run/{run_id}/apply", headers=headers)
+    assert resp.status_code == 409, f"Expected 409, got {resp.status_code}"
+
+
+def test_run_apply_with_curated_items():
+    """Apply with explicit body applies only the provided items (no extra venues inserted)."""
+    _reset_db()
+    client = _get_client()
+    headers = _auth_headers(client)
+    run_id = _insert_discovery_run(user_id=1)
+
+    # Capture venue count before apply
+    venues_before = _count_rows("tracked_venues")
+
+    resp = client.post(
+        f"/api/discovery/run/{run_id}/apply",
+        json={"sources": [_ITEM_SOURCE], "venues": [], "authors": []},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["applied"] is True
+
+    # No extra venues should have been inserted (we passed empty venues in the body)
+    venues_after = _count_rows("tracked_venues")
+    assert venues_after == venues_before, (
+        f"Expected venue count to stay at {venues_before}, got {venues_after}"
+    )
+
+
 def run_tests():
     tests = [
         ("apply_persists_all", test_apply_persists_all),
@@ -263,6 +367,11 @@ def run_tests():
         ("author_no_openalex_id", test_author_no_openalex_id),
         ("apply_requires_auth", test_apply_requires_auth),
         ("apply_empty_pack", test_apply_empty_pack),
+        ("run_apply_sets_status_applied", test_run_apply_sets_status_applied),
+        ("run_apply_idempotent", test_run_apply_idempotent),
+        ("run_apply_ownership_isolation", test_run_apply_ownership_isolation),
+        ("run_apply_wrong_status", test_run_apply_wrong_status),
+        ("run_apply_with_curated_items", test_run_apply_with_curated_items),
     ]
     passed = 0
     failed = 0

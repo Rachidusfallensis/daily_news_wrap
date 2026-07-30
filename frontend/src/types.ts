@@ -97,7 +97,7 @@ export interface ClusterProposal {
 export interface FacetDimension {
   id: string
   label: string
-  type: string
+  type: 'enum' | 'range'
   values: string[]
 }
 

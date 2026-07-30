@@ -17,7 +17,17 @@ export interface AcceptedItems {
   authors: DiscoveredItem[]
 }
 
-type Stage = 'expanding' | 'resolving' | 'done' | 'error'
+type Stage = 'expanding' | 'resolving' | 'verifying' | 'ranking' | 'done' | 'error'
+
+const STAGE_ORDER: Stage[] = ['expanding', 'resolving', 'verifying', 'ranking', 'done']
+const STAGE_LABELS: Record<Stage, string> = {
+  expanding: 'Analysing your thesis…',
+  resolving: 'Searching academic providers…',
+  verifying: 'Verifying sources…',
+  ranking: 'Ranking results…',
+  done: 'Done',
+  error: 'Unavailable',
+}
 
 interface RunStatus {
   run_id: number
@@ -26,13 +36,16 @@ interface RunStatus {
 }
 
 const POLL_INTERVAL_MS = 2000
+const TIMEOUT_MS = 30_000
 
 export default function DiscoveryStep({ runId, thesisText, onApply, onSkip, onEvent }: DiscoveryStepProps) {
   const [stage, setStage] = useState<Stage>('expanding')
+  const [degraded, setDegraded] = useState(false)
   const [pack, setPack] = useState<DiscoveryPack | null>(null)
   const [accepted, setAccepted] = useState<Set<string>>(new Set())
   const [applying, setApplying] = useState(false)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const doneRef = useRef(false)
 
   const stopPolling = useCallback(() => {
@@ -40,7 +53,23 @@ export default function DiscoveryStep({ runId, thesisText, onApply, onSkip, onEv
       clearInterval(pollingRef.current)
       pollingRef.current = null
     }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
+    }
   }, [])
+
+  const setDone = useCallback((discoveryPack: DiscoveryPack) => {
+    doneRef.current = true
+    stopPolling()
+    setPack(discoveryPack)
+    setStage('done')
+    setAccepted(new Set([
+      ...discoveryPack.sources.map(s => `${s.name}|${s.provider}`),
+      ...discoveryPack.venues.map(v => `${v.name}|${v.provider}`),
+      ...discoveryPack.authors.map(a => `${a.name}|${a.provider}`),
+    ]))
+  }, [stopPolling])
 
   const fetchStatus = useCallback(async () => {
     if (!runId || doneRef.current) return
@@ -48,28 +77,20 @@ export default function DiscoveryStep({ runId, thesisText, onApply, onSkip, onEv
       const res = await fetch(`/api/discovery/run/${runId}`, { credentials: 'include' })
       if (!res.ok) return
       const data: RunStatus = await res.json()
-      if (data.status === 'done' && data.pack) {
-        doneRef.current = true
-        stopPolling()
-        setPack(data.pack)
-        setStage('done')
-        const allKeys = new Set([
-          ...data.pack.sources.map(s => `${s.name}|${s.provider}`),
-          ...data.pack.venues.map(v => `${v.name}|${v.provider}`),
-          ...data.pack.authors.map(a => `${a.name}|${a.provider}`),
-        ])
-        setAccepted(allKeys)
-      } else if (data.status === 'error') {
+      const s = data.status as Stage
+      if (s === 'done' && data.pack) {
+        setDone(data.pack)
+      } else if (s === 'error') {
         doneRef.current = true
         stopPolling()
         setStage('error')
-      } else if (data.status === 'resolving') {
-        setStage('resolving')
+      } else if (STAGE_ORDER.includes(s)) {
+        setStage(s)
       }
     } catch {
       // keep polling on transient errors
     }
-  }, [runId, stopPolling])
+  }, [runId, stopPolling, setDone])
 
   useEffect(() => {
     if (!runId) {
@@ -77,21 +98,43 @@ export default function DiscoveryStep({ runId, thesisText, onApply, onSkip, onEv
       return
     }
     doneRef.current = false
+    setDegraded(false)
     setStage('expanding')
     fetchStatus()
     pollingRef.current = setInterval(fetchStatus, POLL_INTERVAL_MS)
+
+    // 30s hard timeout → degraded fallback (NFR-DA9)
+    timeoutRef.current = setTimeout(() => {
+      if (!doneRef.current) {
+        doneRef.current = true
+        stopPolling()
+        setDegraded(true)
+        setStage('error')
+      }
+    }, TIMEOUT_MS)
+
     return stopPolling
   }, [runId, fetchStatus, stopPolling])
 
+  // React to SSE events pushed from the server
   useEffect(() => {
-    if (!onEvent) return
-    const handler = (event: { type: string; [key: string]: unknown }) => {
-      if (event.type === 'discovery:done' && event.run_id === runId && !doneRef.current) {
-        fetchStatus()
-      }
+    if (!onEvent || !runId) return
+    const event = onEvent as unknown as { type: string; run_id?: number }
+    if (!event.type) return
+    const type = event.type
+    if (event.run_id !== runId) return
+    if (doneRef.current) return
+    if (type === 'discovery:expanding') setStage('expanding')
+    else if (type === 'discovery:resolving') setStage('resolving')
+    else if (type === 'discovery:verifying') setStage('verifying')
+    else if (type === 'discovery:ranking') setStage('ranking')
+    else if (type === 'discovery:done') fetchStatus()
+    else if (type === 'discovery:error') {
+      doneRef.current = true
+      stopPolling()
+      setStage('error')
     }
-    return () => { /* cleanup is handled by parent via useSSE */ }
-  }, [runId, onEvent, fetchStatus])
+  }, [onEvent, runId, fetchStatus, stopPolling])
 
   const toggleItem = useCallback((item: DiscoveredItem) => {
     const key = `${item.name}|${item.provider}`
@@ -160,7 +203,9 @@ export default function DiscoveryStep({ runId, thesisText, onApply, onSkip, onEv
     return (
       <div>
         <div className="rounded-md bg-yellow-50 border border-yellow-200 p-4 text-sm text-yellow-800 mb-6">
-          Source discovery is currently unavailable. You can skip this step and configure sources later.
+          {degraded
+            ? 'Source discovery timed out. You can skip this step and configure sources later in Settings → Sources.'
+            : 'Source discovery is currently unavailable. You can skip this step and configure sources later.'}
         </div>
         <div className="flex items-center justify-between mt-6">
           <button onClick={onSkip} className="px-4 py-2 rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors">
@@ -175,12 +220,31 @@ export default function DiscoveryStep({ runId, thesisText, onApply, onSkip, onEv
   }
 
   if (stage !== 'done') {
-    const stageLabel = stage === 'resolving' ? 'Searching academic providers…' : 'Analysing your thesis…'
+    const stageIdx = STAGE_ORDER.indexOf(stage)
+    const progressPct = stageIdx >= 0 ? Math.round((stageIdx / (STAGE_ORDER.length - 1)) * 100) : 0
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
         <Loader2 className="w-8 h-8 animate-spin text-accent mb-4" />
-        <p className="text-sm text-text-muted">{stageLabel}</p>
-        <p className="text-xs text-text-muted/60 mt-2">{thesisText.slice(0, 80)}{thesisText.length > 80 ? '…' : ''}</p>
+        <p className="text-sm text-text-muted mb-4">{STAGE_LABELS[stage]}</p>
+        <div className="w-64 bg-bg-elevated rounded-full h-1.5 overflow-hidden">
+          <div
+            className="h-full bg-accent rounded-full transition-all duration-500"
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+        <div className="flex gap-3 mt-3">
+          {STAGE_ORDER.filter(s => s !== 'done').map((s, i) => (
+            <span
+              key={s}
+              className={`text-[10px] transition-colors ${
+                i <= stageIdx ? 'text-accent font-medium' : 'text-text-muted/50'
+              }`}
+            >
+              {s}
+            </span>
+          ))}
+        </div>
+        <p className="text-xs text-text-muted/60 mt-4">{thesisText.slice(0, 80)}{thesisText.length > 80 ? '…' : ''}</p>
       </div>
     )
   }

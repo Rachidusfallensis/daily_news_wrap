@@ -103,7 +103,7 @@ export function ArticleCard({ article, selected, onClick }: ArticleCardProps) {
         <ScoreBar score={article.score} />
 
         {/* Tags + research badges */}
-        {(article.tags.length > 0 || article.contribution_type || article.re_document_type) && (
+        {(article.tags.length > 0 || article.contribution_type || article.re_document_type || article.facets_json) && (
           <div className="flex flex-wrap gap-1 mb-2">
             {article.tags.slice(0, 3).map(tag => (
               <span

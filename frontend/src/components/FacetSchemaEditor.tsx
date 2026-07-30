@@ -42,7 +42,7 @@ function DimensionEditor({
         <select
           className="px-3 py-1.5 rounded-lg border border-border-default bg-bg-surface text-text-primary text-sm focus:outline-none focus:border-accent"
           value={dim.type}
-          onChange={e => onChange(index, { ...dim, type: e.target.value })}
+          onChange={e => onChange(index, { ...dim, type: e.target.value as 'enum' | 'range' })}
         >
           <option value="enum">enum</option>
           <option value="range">range</option>

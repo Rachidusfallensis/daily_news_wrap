@@ -192,6 +192,106 @@ async def post_apply(
 
 
 # ---------------------------------------------------------------------------
+# POST /api/discovery/{run_id}/apply — idempotent per-run apply (Story 13.5)
+# ---------------------------------------------------------------------------
+
+
+class RunApplyRequest(BaseModel):
+    """Optional user-curated selection; if omitted, the full pack from the run is applied."""
+    sources: Optional[List[source_discovery.DiscoveredItem]] = None
+    venues: Optional[List[source_discovery.DiscoveredItem]] = None
+    authors: Optional[List[source_discovery.DiscoveredItem]] = None
+
+
+@router.post("/run/{run_id}/apply", response_model=ApplyResponse)
+async def post_apply_run(
+    run_id: int,
+    body: Optional[RunApplyRequest] = None,
+    current_user: dict = Depends(require_session),
+):
+    """Apply a completed discovery run for the current user.
+
+    - Validates run ownership (user_id isolation — NFR-T1).
+    - Accepts an optional request body with user-curated items; falls back to
+      the full pack stored in the run when no body is provided.
+    - Idempotent: re-applying returns counts=0 but does not error.
+    - Sets discovery_runs.status='applied' and applied_at on first apply (AC4).
+    """
+    from sqlalchemy import text as _text
+    from database import engine as _engine
+
+    user_id = current_user["id"]
+
+    with _engine.connect() as conn:
+        row = conn.execute(
+            _text(
+                "SELECT id, status, pack_result_json, applied_at "
+                "FROM discovery_runs WHERE id = :rid AND user_id = :uid"
+            ),
+            {"rid": run_id, "uid": user_id},
+        ).fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Discovery run not found")
+
+    run_status = row[1]
+    if run_status not in ("done", "applied"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run is not ready to apply (status={run_status})",
+        )
+
+    # Idempotent: already applied — return empty counts
+    if run_status == "applied":
+        logger.info("apply_run_already_applied", user_id=user_id, run_id=run_id)
+        return ApplyResponse(applied=True, counts={})
+
+    # Resolve which items to apply: user-curated body → fallback full pack
+    if body is not None and (body.sources is not None or body.venues is not None or body.authors is not None):
+        sources = body.sources or []
+        venues = body.venues or []
+        authors = body.authors or []
+    else:
+        pack: source_discovery.DiscoveryPack | None = None
+        if row[2]:
+            try:
+                pack = source_discovery.DiscoveryPack.model_validate_json(row[2])
+            except Exception as e:
+                logger.warning("apply_run_pack_parse_failed", run_id=run_id, error=str(e))
+        if pack is None:
+            raise HTTPException(status_code=422, detail="Run has no result to apply")
+        sources = pack.sources
+        venues = pack.venues
+        authors = pack.authors
+
+    try:
+        counts = source_discovery.apply_discovery_pack(
+            user_id=user_id,
+            sources=sources,
+            venues=venues,
+            authors=authors,
+        )
+    except Exception as e:
+        logger.error("apply_run_failed", user_id=user_id, run_id=run_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Mark run as applied (AC4)
+    with _engine.connect() as conn:
+        conn.execute(
+            _text(
+                "UPDATE discovery_runs "
+                "SET status = 'applied', applied_at = datetime('now') "
+                "WHERE id = :rid AND user_id = :uid"
+            ),
+            {"rid": run_id, "uid": user_id},
+        )
+        conn.commit()
+
+    logger.info("apply_run_endpoint", user_id=user_id, run_id=run_id, counts=counts)
+    return ApplyResponse(applied=True, counts=counts)
+
+
+# ---------------------------------------------------------------------------
 # POST /api/discovery/run  — async background job (Story 15.1)
 # GET  /api/discovery/run/{run_id}
 # ---------------------------------------------------------------------------

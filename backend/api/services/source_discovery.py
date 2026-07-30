@@ -753,8 +753,23 @@ async def run_discovery_job(
             _set_status(conn, "resolving")
         await _broadcast({"type": "discovery:resolving", "run_id": run_id}, user_id)
 
-        # RESOLVE / VERIFY / RANK
-        pack = await resolve_verify_rank(expand_result)
+        # RESOLVE
+        candidates = await _resolve_all(expand_result)
+        capped = _cap_candidates(candidates)
+
+        with _engine.connect() as conn:
+            _set_status(conn, "verifying")
+        await _broadcast({"type": "discovery:verifying", "run_id": run_id}, user_id)
+
+        # VERIFY
+        verified = await _verify_all(capped)
+
+        with _engine.connect() as conn:
+            _set_status(conn, "ranking")
+        await _broadcast({"type": "discovery:ranking", "run_id": run_id}, user_id)
+
+        # RANK
+        pack = _rank_and_group(verified)
 
         with _engine.connect() as conn:
             _store_result(

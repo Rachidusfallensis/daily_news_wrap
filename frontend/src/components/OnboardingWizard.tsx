@@ -25,6 +25,8 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const [manualFacetSchema, setManualFacetSchema] = useState<FacetSchema>({ version: 1, dimensions: [] })
   const [showTemplates, setShowTemplates] = useState(false)
 
+  const [useBootstrap, setUseBootstrap] = useState(true)
+
   const [discoveryRunId, setDiscoveryRunId] = useState<number | null>(null)
 
   const [pollPhase, setPollPhase] = useState<'running' | 'preview'>('running')
@@ -159,7 +161,11 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   }
 
   const handleDiscoveryApply = async (accepted: AcceptedItems) => {
-    await fetch('/api/discovery/apply', {
+    // Use the run-based endpoint when possible — marks discovery_runs.status='applied'
+    const endpoint = discoveryRunId
+      ? `/api/discovery/run/${discoveryRunId}/apply`
+      : '/api/discovery/apply'
+    await fetch(endpoint, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -342,6 +348,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
   if (step === 2) {
     const hasThesis = thesisTitle.trim().length > 0
+    const showBootstrap = hasThesis && useBootstrap
     return (
       <div className="flex h-screen w-screen items-start justify-center bg-bg-base pt-20 overflow-y-auto">
         <div className="w-full max-w-2xl px-6 pb-12">
@@ -361,7 +368,33 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
             />
           )}
 
-          {hasThesis ? (
+          {/* Dual chooser — only when user has entered a thesis */}
+          {hasThesis && (
+            <div className="flex gap-2 mb-6 p-1 rounded-lg bg-bg-elevated border border-border-subtle">
+              <button
+                onClick={() => setUseBootstrap(true)}
+                className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  useBootstrap
+                    ? 'bg-accent text-white shadow-sm'
+                    : 'text-text-muted hover:text-text-primary'
+                }`}
+              >
+                Generate from my thesis
+              </button>
+              <button
+                onClick={() => setUseBootstrap(false)}
+                className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  !useBootstrap
+                    ? 'bg-accent text-white shadow-sm'
+                    : 'text-text-muted hover:text-text-primary'
+                }`}
+              >
+                Build manually
+              </button>
+            </div>
+          )}
+
+          {showBootstrap ? (
             <ConfigBootstrapStep
               thesisText={thesisTitle}
               onNext={handleBootstrapNext}
@@ -452,14 +485,14 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                   disabled={saving}
                   className="px-4 py-2 rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
                 >
-                  Skip
+                  Skip — configure later
                 </button>
                 <button
                   onClick={handleManualNext}
                   disabled={saving}
                   className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors"
                 >
-                  {saving ? 'Saving…' : 'Continue →'}
+                  {saving ? 'Saving…' : 'Save & continue →'}
                 </button>
               </div>
             </div>
