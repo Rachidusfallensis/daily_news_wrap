@@ -299,6 +299,77 @@ def test_dual_write() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Test 7: user_llm_configs table created — Story 15.1 (FR-MT-70, FR-MT-71)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_MIGRATION_USER_LLM_CONFIGS_SQL = (
+    "CREATE TABLE IF NOT EXISTS user_llm_configs ("
+    "user_id INTEGER NOT NULL REFERENCES users(id), "
+    "role TEXT NOT NULL, "
+    "provider TEXT NOT NULL, "
+    "model TEXT NOT NULL, "
+    "api_key_enc BLOB, "
+    "base_url TEXT, "
+    "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+    "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+    "PRIMARY KEY (user_id, role))"
+)
+
+
+def test_user_llm_configs_table_created() -> None:
+    """Migration additive crée user_llm_configs sans erreur, avec les bonnes colonnes."""
+    conn = _memory_db()
+    for s in _SETUP_SQL:
+        conn.execute(s)
+
+    conn.execute(_MIGRATION_USER_LLM_CONFIGS_SQL)
+    conn.commit()
+
+    result = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='user_llm_configs'"
+    ).fetchone()
+    _assert_true("user_llm_configs table exists", result is not None)
+
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(user_llm_configs)").fetchall()}
+    expected = {"user_id", "role", "provider", "model", "api_key_enc", "base_url", "created_at", "updated_at"}
+    diff = expected - cols
+    if diff:
+        _fail("user_llm_configs columns", f"missing: {diff}")
+    else:
+        _ok("user_llm_configs columns match spec")
+
+    pk_cols = {row["name"] for row in conn.execute("PRAGMA table_info(user_llm_configs)").fetchall() if row["pk"] > 0}
+    _assert_true("primary key is (user_id, role)", pk_cols == {"user_id", "role"})
+
+    conn.close()
+
+
+def test_user_llm_configs_migration_idempotent() -> None:
+    """La migration peut être appliquée deux fois sans erreur ; user_id=1 n'a aucune ligne (fallback env vars)."""
+    conn = _memory_db()
+    for s in _SETUP_SQL:
+        conn.execute(s)
+    conn.execute("INSERT INTO users (id, email, password_hash) VALUES (1, 'u@v.com', 'h')")
+    conn.commit()
+
+    # First run
+    conn.execute(_MIGRATION_USER_LLM_CONFIGS_SQL)
+    conn.commit()
+    # Second run — must not raise
+    try:
+        conn.execute(_MIGRATION_USER_LLM_CONFIGS_SQL)
+        conn.commit()
+        _ok("migration idempotent — second run does not raise")
+    except Exception as exc:
+        _fail("migration idempotent", f"raised on second run: {exc}")
+
+    rows = conn.execute("SELECT * FROM user_llm_configs WHERE user_id = 1").fetchall()
+    _assert_true("user_id=1 has no rows (env-var fallback)", len(rows) == 0)
+
+    conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Runner
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -309,6 +380,8 @@ if __name__ == "__main__":
     test_backfill_subscriptions()
     test_idempotency()
     test_dual_write()
+    test_user_llm_configs_table_created()
+    test_user_llm_configs_migration_idempotent()
 
     total = _PASS + _FAIL
     print(f"\n{'='*40}")
