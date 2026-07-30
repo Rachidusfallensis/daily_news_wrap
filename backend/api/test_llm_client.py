@@ -39,6 +39,19 @@ def test_complete_openrouter_success():
     assert kwargs["headers"]["HTTP-Referer"] == "https://github.com/basira"
 
 
+def test_complete_openrouter_disables_reasoning():
+    """OpenRouter proxies arbitrary models, some of which reason by default —
+    request must ask it disabled so a random routed model can't silently burn
+    its budget on hidden reasoning tokens."""
+    config = LLMConfig(provider="openrouter", model="some/reasoning-model",
+                        api_key="sk-or-x", base_url=None, source="user")
+    resp = _mock_response({"choices": [{"message": {"content": "hello"}}]})
+    with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=resp)) as mock_post:
+        _run(complete(config, "system", "user msg"))
+    _url, kwargs = mock_post.call_args
+    assert kwargs["json"]["reasoning"] == {"enabled": False}
+
+
 def test_complete_openai_success():
     config = LLMConfig(provider="openai", model="gpt-4o-mini",
                         api_key="sk-x", base_url=None, source="user")
@@ -48,6 +61,7 @@ def test_complete_openai_success():
     assert result == "hi"
     url, kwargs = mock_post.call_args
     assert url[0] == "https://api.openai.com/v1/chat/completions"
+    assert "reasoning" not in kwargs["json"]  # OpenAI's API shape doesn't support this field
     assert "HTTP-Referer" not in kwargs["headers"]
 
 
@@ -58,8 +72,11 @@ def test_complete_ollama_success():
     with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=resp)) as mock_post:
         result = _run(complete(config, "system", "user msg"))
     assert result == "local reply"
-    url, _kwargs = mock_post.call_args
+    url, kwargs = mock_post.call_args
     assert url[0] == "http://host.docker.internal:11434/api/chat"
+    # Reasoning models (gemma3+, qwen3…) otherwise burn the whole token
+    # budget on hidden `message.thinking` before ever emitting `.content`.
+    assert kwargs["json"]["think"] is False
 
 
 def test_complete_anthropic_success():
@@ -82,8 +99,10 @@ def test_complete_gemini_success():
     with patch("httpx.AsyncClient.post", new=AsyncMock(return_value=resp)) as mock_post:
         result = _run(complete(config, "system", "user msg"))
     assert result == "gemini reply"
-    url, _kwargs = mock_post.call_args
+    url, kwargs = mock_post.call_args
     assert "gemini-1.5-flash:generateContent?key=AIza-x" in url[0]
+    # 2.x-series Gemini models think by default; disable on models that support it.
+    assert kwargs["json"]["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
 
 
 def test_complete_anthropic_missing_key_returns_none():

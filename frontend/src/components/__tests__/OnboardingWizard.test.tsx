@@ -73,6 +73,76 @@ async function advanceToClustersStep(user: ReturnType<typeof userEvent.setup>) {
   })
 }
 
+/** Walk all the way to Step 5 ("First run"). */
+async function advanceToFirstRunStep(user: ReturnType<typeof userEvent.setup>) {
+  await advanceToClustersStep(user)
+  await user.click(screen.getByText('Save & continue →')) // step 4 → step 5
+}
+
+describe('OnboardingWizard — Step 5 poll trigger error handling', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('shows an error state with a Retry button when /api/poll/trigger returns a non-2xx', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(makeFetchMock({
+      'POST /api/poll/trigger': () => new Response('Bad Gateway', { status: 502 }),
+    }))
+
+    const user = userEvent.setup()
+    render(<OnboardingWizard onComplete={vi.fn()} />)
+    await advanceToFirstRunStep(user)
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to start the background poll/)).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Running your first poll')).not.toBeInTheDocument()
+    expect(screen.getByText('Retry →')).toBeInTheDocument()
+  })
+
+  it('shows the error state when the fetch itself throws (poller unreachable)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(makeFetchMock({
+      'POST /api/poll/trigger': () => { throw new Error('network error') },
+    }))
+
+    const user = userEvent.setup()
+    render(<OnboardingWizard onComplete={vi.fn()} />)
+    await advanceToFirstRunStep(user)
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to start the background poll/)).toBeInTheDocument()
+    })
+  })
+
+  it('retrying after a failed poll trigger re-fires the request and recovers', async () => {
+    let triggerCallCount = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation(makeFetchMock({
+      'POST /api/poll/trigger': () => {
+        triggerCallCount += 1
+        return triggerCallCount === 1
+          ? new Response('Bad Gateway', { status: 502 })
+          : new Response(JSON.stringify({}), { status: 200 })
+      },
+    }))
+
+    const user = userEvent.setup()
+    render(<OnboardingWizard onComplete={vi.fn()} />)
+    await advanceToFirstRunStep(user)
+
+    await waitFor(() => {
+      expect(screen.getByText('Retry →')).toBeInTheDocument()
+    })
+    expect(triggerCallCount).toBe(1)
+
+    await user.click(screen.getByText('Retry →'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Running your first poll')).toBeInTheDocument()
+    })
+    expect(triggerCallCount).toBe(2)
+  })
+})
+
 describe('OnboardingWizard — step order (Thesis → LLM → Sources → Clusters → First run)', () => {
   beforeEach(() => {
     vi.restoreAllMocks()

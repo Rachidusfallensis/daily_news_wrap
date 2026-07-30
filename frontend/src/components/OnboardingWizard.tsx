@@ -29,10 +29,11 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
   const [discoveryRunId, setDiscoveryRunId] = useState<number | null>(null)
 
-  const [pollPhase, setPollPhase] = useState<'running' | 'preview'>('running')
+  const [pollPhase, setPollPhase] = useState<'running' | 'preview' | 'error'>('running')
+  const [pollError, setPollError] = useState('')
   const [scoredCount, setScoredCount] = useState(0)
   const [previewArticles, setPreviewArticles] = useState<any[]>([])
-  const [pollTriggered, setPollTriggered] = useState(false)
+  const [pollAttempt, setPollAttempt] = useState(0)
 
   const handleStep1 = async () => {
     setError('')
@@ -224,59 +225,95 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   }
 
   // ── Step 5: trigger poll, stream via SSE, show top 3 ──────────────────
+  // Re-runs whenever `pollAttempt` changes, so handlePollRetry (below) can
+  // cleanly re-invoke the whole sequence — including re-POSTing the trigger
+  // — rather than getting stuck waiting on SSE events that will never
+  // arrive if the poller was unreachable the first time.
 
   useEffect(() => {
-    if (step !== 5 || pollTriggered) return
-    setPollTriggered(true)
+    if (step !== 5) return
+    let cancelled = false
+    setPollPhase('running')
+    setPollError('')
+    setScoredCount(0)
 
-    fetch('/api/poll/trigger', { method: 'POST', credentials: 'include' }).catch(() => {})
+    let evtSource: EventSource | null = null
+    let previewTimer: ReturnType<typeof setInterval> | null = null
+    let articleCheck: ReturnType<typeof setInterval> | null = null
+    let timeout: ReturnType<typeof setTimeout> | null = null
 
-    const evtSource = new EventSource('/api/stream', { withCredentials: true })
-    const collected: any[] = []
-
-    evtSource.onmessage = (e) => {
+    const start = async () => {
+      let res: Response
       try {
-        const msg = JSON.parse(e.data)
-        if (msg.type === 'new_article' && msg.data?.score != null) {
-          collected.push(msg.data)
-          setScoredCount(collected.length)
+        res = await fetch('/api/poll/trigger', { method: 'POST', credentials: 'include' })
+      } catch {
+        if (!cancelled) {
+          setPollError('Failed to start the background poll. The poller service might be unavailable.')
+          setPollPhase('error')
         }
-      } catch {}
+        return
+      }
+      if (!res.ok) {
+        if (!cancelled) {
+          setPollError('Failed to start the background poll. The poller service might be unavailable.')
+          setPollPhase('error')
+        }
+        return
+      }
+      if (cancelled) return
+
+      evtSource = new EventSource('/api/stream', { withCredentials: true })
+      const collected: any[] = []
+
+      evtSource.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data)
+          if (msg.type === 'new_article' && msg.data?.score != null) {
+            collected.push(msg.data)
+            setScoredCount(collected.length)
+          }
+        } catch {}
+      }
+
+      previewTimer = setInterval(async () => {
+        try {
+          const res = await fetch('/api/onboarding/preview', { credentials: 'include' })
+          if (res.ok) {
+            const data = await res.json()
+            if (data.length >= 1) setPreviewArticles(data)
+          }
+        } catch {}
+      }, 5000)
+
+      articleCheck = setInterval(() => {
+        if (collected.length >= 3) {
+          setPollPhase('preview')
+          if (articleCheck) clearInterval(articleCheck)
+          if (previewTimer) clearInterval(previewTimer)
+          evtSource?.close()
+        }
+      }, 1000)
+
+      timeout = setTimeout(() => {
+        setPollPhase('preview')
+        if (articleCheck) clearInterval(articleCheck)
+        if (previewTimer) clearInterval(previewTimer)
+        evtSource?.close()
+      }, 120000)
     }
 
-    const previewTimer = setInterval(async () => {
-      try {
-        const res = await fetch('/api/onboarding/preview', { credentials: 'include' })
-        if (res.ok) {
-          const data = await res.json()
-          if (data.length >= 1) setPreviewArticles(data)
-        }
-      } catch {}
-    }, 5000)
-
-    const articleCheck = setInterval(() => {
-      if (collected.length >= 3) {
-        setPollPhase('preview')
-        clearInterval(articleCheck)
-        clearInterval(previewTimer)
-        evtSource.close()
-      }
-    }, 1000)
-
-    const timeout = setTimeout(() => {
-      setPollPhase('preview')
-      clearInterval(articleCheck)
-      clearInterval(previewTimer)
-      evtSource.close()
-    }, 120000)
+    start()
 
     return () => {
-      evtSource.close()
-      clearInterval(articleCheck)
-      clearInterval(previewTimer)
-      clearTimeout(timeout)
+      cancelled = true
+      evtSource?.close()
+      if (articleCheck) clearInterval(articleCheck)
+      if (previewTimer) clearInterval(previewTimer)
+      if (timeout) clearTimeout(timeout)
     }
-  }, [step, pollTriggered])
+  }, [step, pollAttempt])
+
+  const handlePollRetry = () => setPollAttempt(a => a + 1)
 
   const StepIndicator = () => (
     <div className="flex items-center justify-center gap-2 mb-10">
@@ -521,6 +558,25 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
             </div>
           )}
           {error && <p className="text-danger text-xs mt-4">{error}</p>}
+        </div>
+      </div>
+    )
+  }
+
+  // Step 5 — poll failed to start
+  if (step === 5 && pollPhase === 'error') {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-bg-base">
+        <div className="w-full max-w-sm px-6 text-center">
+          <StepIndicator />
+          <div className="mt-8">
+            <div className="rounded-md bg-yellow-50 border border-yellow-200 p-4 text-sm text-yellow-800 mb-6 text-left">
+              {pollError}
+            </div>
+            <button onClick={handlePollRetry} className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors">
+              Retry →
+            </button>
+          </div>
         </div>
       </div>
     )

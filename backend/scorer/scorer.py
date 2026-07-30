@@ -302,7 +302,15 @@ async def score_with_openrouter(
                     {"role": "user", "content": user_message},
                 ],
                 "temperature": 0.3,
-                "max_tokens": 1024,
+                "max_tokens": 2048,
+                # Best-effort: OpenRouter proxies arbitrary underlying models,
+                # some of which reason by default (same failure mode as
+                # Ollama's "thinking" models below — reasoning tokens can eat
+                # the whole budget before the JSON answer is ever emitted).
+                # OpenRouter's unified reasoning control is documented as
+                # ignored by models that don't support it, so safe to always
+                # send. Not live-verified against every possible routed model.
+                "reasoning": {"enabled": False},
             },
             timeout=60,
         )
@@ -341,9 +349,19 @@ async def score_with_ollama(
                     {"role": "user", "content": user_message},
                 ],
                 "stream": False,
+                # Reasoning/"thinking" models (gemma3+, qwen3, deepseek-r1…)
+                # emit their chain-of-thought into a separate `message.thinking`
+                # field and can burn an arbitrarily large token budget doing
+                # so before ever reaching `message.content` — which then comes
+                # back empty. We don't want reasoning for a single-shot
+                # structured-JSON task regardless of which model is
+                # configured, so disable it outright rather than trying to
+                # guess a budget big enough for an unknown model. Ollama
+                # ignores `think` for models that don't support it.
+                "think": False,
                 "options": {
                     "temperature": 0.3,
-                    "num_predict": 512,
+                    "num_predict": 1024,
                 },
             },
             timeout=120,
@@ -414,15 +432,21 @@ async def _score_with_tenant_config(
             headers = {"Content-Type": "application/json"}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
-            resp = await client.post(url, headers=headers, json={
+            body = {
                 "model": model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
                 "temperature": 0.3,
-                "max_tokens": 1024,
-            }, timeout=60)
+                "max_tokens": 2048,
+            }
+            if provider == "openrouter":
+                # Best-effort: see matching comment on score_with_openrouter()
+                # above — OpenRouter proxies arbitrary models, some reasoning
+                # by default. Not applicable to plain OpenAI's API shape.
+                body["reasoning"] = {"enabled": False}
+            resp = await client.post(url, headers=headers, json=body, timeout=60)
             if not resp.is_success:
                 print(f"Tenant {provider} error {resp.status_code}: {resp.text[:300]}")
                 return None
@@ -437,7 +461,10 @@ async def _score_with_tenant_config(
                     {"role": "user", "content": user_message},
                 ],
                 "stream": False,
-                "options": {"temperature": 0.3, "num_predict": 512},
+                # See matching comment on score_with_ollama() above — disable
+                # reasoning outright rather than guessing a budget.
+                "think": False,
+                "options": {"temperature": 0.3, "num_predict": 1024},
             }, timeout=120)
             if not resp.is_success:
                 print(f"Tenant ollama error {resp.status_code}: {resp.text[:300]}")
@@ -453,7 +480,7 @@ async def _score_with_tenant_config(
                 "content-type": "application/json",
             }, json={
                 "model": model,
-                "max_tokens": 1024,
+                "max_tokens": 2048,
                 "temperature": 0.3,
                 "system": system_prompt,
                 "messages": [{"role": "user", "content": user_message}],
@@ -473,7 +500,16 @@ async def _score_with_tenant_config(
             resp = await client.post(url, json={
                 "systemInstruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": user_message}]}],
-                "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1024},
+                "generationConfig": {
+                    "temperature": 0.3,
+                    "maxOutputTokens": 2048,
+                    # Best-effort: 2.x-series Gemini models think by default.
+                    # thinkingBudget: 0 disables it on models that support
+                    # disabling (Flash/Flash-Lite); Pro enforces a minimum
+                    # budget and will just clamp instead of erroring. Not
+                    # live-verified — no Gemini key available to test against.
+                    "thinkingConfig": {"thinkingBudget": 0},
+                },
             }, timeout=60)
             if not resp.is_success:
                 print(f"Tenant gemini error {resp.status_code}: {resp.text[:300]}")

@@ -34,25 +34,33 @@ async def _chat_openai_compatible(
     temperature: float,
     max_tokens: int,
     extra_headers: Optional[dict] = None,
+    disable_reasoning: bool = False,
 ) -> Optional[str]:
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     if extra_headers:
         headers.update(extra_headers)
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if disable_reasoning:
+        # Best-effort (OpenRouter only — see complete()'s dispatch): proxies
+        # arbitrary underlying models, some of which reason by default and
+        # can burn the whole token budget before emitting the actual answer.
+        # Documented as ignored by models that don't support it.
+        body["reasoning"] = {"enabled": False}
     try:
         r = await client.post(
             f"{base_url.rstrip('/')}/chat/completions",
             headers=headers,
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            },
+            json=body,
             timeout=60.0,
         )
         if not r.is_success:
@@ -84,6 +92,13 @@ async def _chat_ollama(
                     {"role": "user", "content": user_message},
                 ],
                 "stream": False,
+                # Disable reasoning outright for this single-shot structured-
+                # JSON extraction — a "thinking" model (gemma3+, qwen3…)
+                # otherwise emits its chain-of-thought into a separate
+                # `message.thinking` field and can exhaust the token budget
+                # before ever reaching `message.content`. Ollama ignores
+                # `think` for models that don't support it.
+                "think": False,
                 "options": {"temperature": temperature, "num_predict": max_tokens},
             },
             timeout=120.0,
@@ -148,7 +163,16 @@ async def _chat_gemini(
             json={
                 "systemInstruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": user_message}]}],
-                "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
+                "generationConfig": {
+                    "temperature": temperature,
+                    "maxOutputTokens": max_tokens,
+                    # Best-effort: 2.x-series Gemini models think by default.
+                    # Disables it on models that support disabling
+                    # (Flash/Flash-Lite); Pro enforces a minimum and clamps
+                    # instead of erroring. Not live-verified — no Gemini key
+                    # available to test against.
+                    "thinkingConfig": {"thinkingBudget": 0},
+                },
             },
             timeout=60.0,
         )
@@ -184,6 +208,7 @@ async def complete(
                 client, base_url, config.api_key, config.model, system_prompt, user_message,
                 temperature, max_tokens,
                 extra_headers={"HTTP-Referer": "https://github.com/basira", "X-Title": "Basira"},
+                disable_reasoning=True,
             )
         if provider == "openai":
             return await _chat_openai_compatible(
