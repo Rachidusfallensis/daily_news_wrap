@@ -52,7 +52,7 @@ def client():
 
 
 def test_step3_saves_scorer_embedder(client, fernet_key):
-    """POST /api/onboarding/step3 sauvegarde scorer + review + ask + embedder."""
+    """POST /api/onboarding/step3 sauvegarde scorer + review + ask + onboarding + embedder."""
     resp = client.post("/api/onboarding/step3", json={
         "provider": "openrouter",
         "model": "google/gemini-flash-1.5",
@@ -67,20 +67,18 @@ def test_step3_saves_scorer_embedder(client, fernet_key):
             {"uid": TEST_USER_ID},
         ).fetchall()
     roles = {row[0]: row for row in rows}
-    assert set(roles.keys()) == {"scorer", "review", "ask", "embedder"}
+    assert set(roles.keys()) == {"scorer", "review", "ask", "onboarding", "embedder"}
     assert roles["scorer"][1] == "openrouter"
     assert roles["scorer"][2] is not None  # encrypted key present
     assert roles["review"][1] == "openrouter"
     assert roles["ask"][1] == "openrouter"
+    # Story MT-LLM-gate: bootstrap/discovery resolve via "onboarding" — without
+    # this row, has_user_llm_config("onboarding") gates them out right after
+    # this step completes, even though the user just configured their LLM.
+    assert roles["onboarding"][1] == "openrouter"
+    assert roles["onboarding"][2] is not None
     assert roles["embedder"][1] == "ollama"
     assert roles["embedder"][2] is None  # no key for Ollama
-
-
-def test_step3_skip(client):
-    """POST /api/onboarding/step3/skip retourne {"status":"skipped"}."""
-    resp = client.post("/api/onboarding/step3/skip")
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "skipped"
 
 
 def test_step3_ollama_no_key(client):

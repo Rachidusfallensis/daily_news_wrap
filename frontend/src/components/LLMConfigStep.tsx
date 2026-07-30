@@ -11,11 +11,10 @@ export interface LLMConfigResult {
 
 interface LLMConfigStepProps {
   onNext: (config: LLMConfigResult) => void | Promise<void>
-  onSkip: () => void
   saving?: boolean
 }
 
-export default function LLMConfigStep({ onNext, onSkip, saving }: LLMConfigStepProps) {
+export default function LLMConfigStep({ onNext, saving }: LLMConfigStepProps) {
   const [providers, setProviders] = useState<ProviderDescriptor[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
@@ -107,8 +106,9 @@ export default function LLMConfigStep({ onNext, onSkip, saving }: LLMConfigStepP
     <div>
       <h2 className="text-lg font-semibold text-text-primary mb-1">Configure your LLM provider</h2>
       <p className="text-sm text-text-muted mb-7 leading-relaxed">
-        Baṣīra needs an LLM to score and summarize your articles. Paste an API key to auto-detect your
-        provider, or pick one below.{' '}
+        Baṣīra needs your own LLM — local or remote — to score and summarize your articles. Every
+        request from here on runs on your provider, not a shared default. Paste an API key to
+        auto-detect your provider, or pick Ollama for a free local model.{' '}
         <span className="text-[11px] font-mono text-text-muted">FR-MT-77</span>
       </p>
 
@@ -175,6 +175,24 @@ export default function LLMConfigStep({ onNext, onSkip, saving }: LLMConfigStepP
             </div>
           )}
 
+          <div>
+            <label htmlFor="llm-model" className="block text-sm font-medium text-text-primary mb-1.5">
+              Model
+            </label>
+            <input
+              id="llm-model"
+              className="w-full px-3 py-2 rounded-lg border border-border-default bg-bg-surface text-text-primary text-sm placeholder:text-text-muted/60 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-colors"
+              value={model}
+              onChange={e => setModel(e.target.value)}
+              placeholder={descriptor.recommended_model ?? ''}
+            />
+            <p className="text-[11px] text-text-muted mt-1">
+              {selected === 'ollama'
+                ? "The exact model name Ollama will be called with — must match a model you've already pulled (run `ollama list` to check). Defaults to a suggestion, not necessarily what's installed."
+                : 'The exact model your provider will be called with.'}
+            </p>
+          </div>
+
           <button
             onClick={handleTest}
             disabled={testing || !canTest}
@@ -193,10 +211,7 @@ export default function LLMConfigStep({ onNext, onSkip, saving }: LLMConfigStepP
 
       {loadError && <p className="text-danger text-xs mb-4">{loadError}</p>}
 
-      <div className="flex items-center justify-between mt-6">
-        <button onClick={onSkip} disabled={saving} className="px-4 py-2 rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50">
-          Passer — configurer plus tard
-        </button>
+      <div className="flex items-center justify-end mt-6">
         <button onClick={handleValidate} disabled={saving || !canValidate} className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors">
           {saving ? 'Saving…' : 'Valider'}
         </button>

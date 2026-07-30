@@ -305,12 +305,18 @@ def _extract_json_object(text: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 
 
-async def expand(thesis_text: str) -> ExpandResult:
+async def expand(thesis_text: str, user_id: Optional[int] = None) -> ExpandResult:
+    """When `user_id` is given, routes through the tenant's own LLM config
+    (`TenantLLMRouter`, role="onboarding") via `llm_client.complete()`.
+    When omitted (legacy callers, tests), falls back to the global env-var
+    3-tier ladder unchanged.
+    """
     sanitized = sanitize(thesis_text)
     if not sanitized:
         return _degraded_result(thesis_text)
 
-    cache_key = hashlib.sha256(sanitized.encode("utf-8")).hexdigest()
+    cache_key_material = f"{user_id}:{sanitized}" if user_id is not None else sanitized
+    cache_key = hashlib.sha256(cache_key_material.encode("utf-8")).hexdigest()
     cached = _cache_get(cache_key)
     if cached is not None:
         logger.info("expand_cache_hit", key_prefix=cache_key[:8])
@@ -318,7 +324,13 @@ async def expand(thesis_text: str) -> ExpandResult:
 
     t0 = time.perf_counter()
     try:
-        content = await _call_llm(sanitized)
+        if user_id is not None:
+            from services.llm_client import complete
+            from services.tenant_llm_router import TenantLLMRouter
+            tenant_config = TenantLLMRouter(user_id).get_config("onboarding")
+            content = await complete(tenant_config, _EXPAND_SYSTEM, sanitized)
+        else:
+            content = await _call_llm(sanitized)
     except Exception as e:
         logger.warning("expand_llm_exception", error=str(e), latency_ms=int((time.perf_counter() - t0) * 1000))
         return _degraded_result(thesis_text)
@@ -747,7 +759,7 @@ async def run_discovery_job(
             )
             logger.info("run_job_expand_from_keywords", run_id=run_id, kw_count=len(keywords))
         else:
-            expand_result = await expand(thesis_text)
+            expand_result = await expand(thesis_text, user_id=user_id)
 
         with _engine.connect() as conn:
             _set_status(conn, "resolving")

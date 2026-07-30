@@ -354,3 +354,73 @@ class TestModelShape:
         # Out-of-range values should raise — the model uses pydantic constraints.
         with pytest.raises(Exception):
             svc.ClusterProposal(name="x", description="y", reward_level=2.0)
+
+
+@SKIP_INTEGRATION
+class TestTenantRouting:
+    """Story MT-LLM-gate: generate(user_id=...) routes via TenantLLMRouter, not the legacy ladder."""
+
+    def test_user_id_routes_via_tenant_llm_router(self, monkeypatch):
+        svc = _import_service()
+        svc._cache_clear()
+
+        legacy_call_count = {"n": 0}
+
+        async def fake_legacy_call_llm(_msg):
+            legacy_call_count["n"] += 1
+            return _VALID_LLM_JSON
+
+        monkeypatch.setattr(svc, "_call_llm", fake_legacy_call_llm)
+
+        from unittest.mock import AsyncMock, MagicMock
+        fake_config = MagicMock(provider="openrouter", model="google/gemini-flash-1.5")
+        fake_router_instance = MagicMock()
+        fake_router_instance.get_config.return_value = fake_config
+
+        with (
+            monkeypatch.context() as m,
+        ):
+            m.setattr("services.tenant_llm_router.TenantLLMRouter", lambda user_id: fake_router_instance)
+            m.setattr("services.llm_client.complete", AsyncMock(return_value=_VALID_LLM_JSON))
+            result = asyncio.run(svc.generate("A thesis on urban mobility.", user_id=42))
+
+        assert result.degraded is False
+        assert result.domain_label == "Urban Mobility"
+        assert legacy_call_count["n"] == 0  # legacy ladder never touched
+        fake_router_instance.get_config.assert_called_once_with("onboarding")
+
+    def test_user_id_none_keeps_legacy_path(self, monkeypatch):
+        """Regression guard: omitting user_id must still hit the legacy _call_llm ladder."""
+        svc = _import_service()
+        svc._cache_clear()
+
+        async def fake_call_llm(_msg):
+            return _VALID_LLM_JSON
+
+        monkeypatch.setattr(svc, "_call_llm", fake_call_llm)
+        result = asyncio.run(svc.generate("A thesis with no user_id."))
+        assert result.degraded is False
+        assert result.domain_label == "Urban Mobility"
+
+    def test_cache_isolated_per_user_id(self, monkeypatch):
+        """Two tenants with identical thesis text must not share a cached LLM response."""
+        svc = _import_service()
+        svc._cache_clear()
+
+        from unittest.mock import AsyncMock, MagicMock
+        call_count = {"n": 0}
+
+        async def fake_complete(*_args, **_kwargs):
+            call_count["n"] += 1
+            return _VALID_LLM_JSON
+
+        fake_router_instance = MagicMock()
+        fake_router_instance.get_config.return_value = MagicMock(provider="openrouter", model="m")
+
+        with monkeypatch.context() as m:
+            m.setattr("services.tenant_llm_router.TenantLLMRouter", lambda user_id: fake_router_instance)
+            m.setattr("services.llm_client.complete", fake_complete)
+            asyncio.run(svc.generate("identical thesis text", user_id=1))
+            asyncio.run(svc.generate("identical thesis text", user_id=2))
+
+        assert call_count["n"] == 2  # each tenant triggers its own LLM call, no cross-tenant cache hit

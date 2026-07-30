@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from auth import require_session
 from database import ConfigTemplate, UserConfig, get_db, get_valid_thesis_sections
 from services import config_bootstrap
+from services.tenant_llm_router import has_user_llm_config
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 # Story 11.3 — branch router for template listing (prefix /api, not /api/profile).
@@ -471,6 +472,8 @@ async def post_bootstrap(
     PUT /api/profile/config to persist the chosen fields.
     """
     user_id = current_user["id"]
+    if not has_user_llm_config(user_id, "onboarding"):
+        raise HTTPException(status_code=428, detail="LLM provider not configured")
     retry_after = _check_bootstrap_rate_limit(user_id)
     if retry_after is not None:
         # NFR-DA6 — surface a Retry-After so the client backs off cleanly.
@@ -479,7 +482,7 @@ async def post_bootstrap(
             detail="Bootstrap rate limit exceeded",
             headers={"Retry-After": str(retry_after)},
         )
-    result = await config_bootstrap.generate(body.thesis_text)
+    result = await config_bootstrap.generate(body.thesis_text, user_id=user_id)
     logger.info(
         "bootstrap_preview",
         user_id=user_id,

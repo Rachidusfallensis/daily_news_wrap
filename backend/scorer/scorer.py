@@ -30,6 +30,12 @@ UNI_OLLAMA_API_KEY = os.getenv("UNI_OLLAMA_API_KEY", "")
 SCORER_MAX_CHARS = int(os.getenv("SCORER_MAX_CHARS", "6000"))
 API_BASE = "http://api:8000"
 API_SECRET = os.getenv("API_SECRET", "changeme")
+# Story MT-LLM-gate — route scoring through each tenant's own configured LLM
+# before falling back to the shared uni/openrouter/ollama ladder below.
+# Defaults OFF: this is the highest-blast-radius change in the LLM-router
+# refactor (hot path for every article, every existing tenant) — flip on
+# only after Phase 6 integration verification passes.
+SCORER_TENANT_ROUTING_ENABLED = os.getenv("SCORER_TENANT_ROUTING_ENABLED", "false").lower() == "true"
 
 INTERNAL_HEADERS = {"X-Internal-Secret": API_SECRET, "Content-Type": "application/json"}
 
@@ -357,6 +363,137 @@ async def score_with_ollama(
     return None
 
 
+async def _get_tenant_llm_config(
+    client: httpx.AsyncClient, user_id: int, role: str = "scorer"
+) -> Optional[dict]:
+    """Fetch the tenant's resolved LLM config from the api container.
+
+    scorer.py has no DB access (separate deploy, no DB driver) — this crosses
+    the same internal-network trust boundary as prompt-cache/feedback-examples.
+    Returns None on any failure (mirrors _resolve_cached_prompt's try/except).
+    """
+    try:
+        resp = await client.get(
+            f"{API_BASE}/api/internal/users/{user_id}/llm-config",
+            params={"role": role},
+            headers=INTERNAL_HEADERS,
+            timeout=5,
+        )
+        if resp.is_success:
+            return resp.json()
+    except Exception:
+        pass
+    return None
+
+
+async def _score_with_tenant_config(
+    client: httpx.AsyncClient,
+    tenant_cfg: dict,
+    user_message: str,
+    system_prompt: str,
+    facet_schema: Optional[dict],
+) -> Optional[ScoreResult]:
+    """Dispatch one scoring call using a tenant-resolved LLM config.
+
+    Small duplicate of backend/api/services/llm_client.py's provider
+    branching — scorer.py is a separate container/deploy with no shared-code
+    mechanism to the api image, so this ~40-line duplication is the accepted
+    tradeoff over introducing a cross-container package dependency.
+    """
+    provider = tenant_cfg.get("provider")
+    model = tenant_cfg.get("model")
+    api_key = tenant_cfg.get("api_key")
+    base_url = tenant_cfg.get("base_url")
+
+    try:
+        if provider in ("openrouter", "openai"):
+            url = (base_url or (
+                "https://openrouter.ai/api/v1" if provider == "openrouter"
+                else "https://api.openai.com/v1"
+            )).rstrip("/") + "/chat/completions"
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            resp = await client.post(url, headers=headers, json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                "temperature": 0.3,
+                "max_tokens": 1024,
+            }, timeout=60)
+            if not resp.is_success:
+                print(f"Tenant {provider} error {resp.status_code}: {resp.text[:300]}")
+                return None
+            content = resp.json()["choices"][0]["message"]["content"]
+
+        elif provider == "ollama":
+            url = (base_url or "http://host.docker.internal:11434").rstrip("/") + "/api/chat"
+            resp = await client.post(url, json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                "stream": False,
+                "options": {"temperature": 0.3, "num_predict": 512},
+            }, timeout=120)
+            if not resp.is_success:
+                print(f"Tenant ollama error {resp.status_code}: {resp.text[:300]}")
+                return None
+            content = resp.json().get("message", {}).get("content")
+
+        elif provider == "anthropic":
+            if not api_key:
+                return None
+            resp = await client.post("https://api.anthropic.com/v1/messages", headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            }, json={
+                "model": model,
+                "max_tokens": 1024,
+                "temperature": 0.3,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": user_message}],
+            }, timeout=60)
+            if not resp.is_success:
+                print(f"Tenant anthropic error {resp.status_code}: {resp.text[:300]}")
+                return None
+            content = resp.json()["content"][0]["text"]
+
+        elif provider == "gemini":
+            if not api_key:
+                return None
+            url = (
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={api_key}"
+            )
+            resp = await client.post(url, json={
+                "systemInstruction": {"parts": [{"text": system_prompt}]},
+                "contents": [{"role": "user", "parts": [{"text": user_message}]}],
+                "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1024},
+            }, timeout=60)
+            if not resp.is_success:
+                print(f"Tenant gemini error {resp.status_code}: {resp.text[:300]}")
+                return None
+            content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+        else:
+            print(f"Tenant scoring: unknown provider '{provider}'")
+            return None
+
+        parsed = extract_json_from_text(content) if content else None
+        if parsed:
+            return validate_score_result(parsed, facet_schema)
+        print(f"Tenant {provider}: could not parse JSON from response")
+    except Exception as e:
+        print(f"Tenant {provider} scoring failed: {e}")
+
+    return None
+
+
 async def build_preference_block(client: httpx.AsyncClient, user_id: int = 1) -> str:
     """Build a compact, structured preference profile from the full feedback history.
 
@@ -451,8 +588,18 @@ async def score_article(req: ScoreRequest):
         # the LLM response is parsed into facets_json keyed by dimension IDs.
         facet_schema = (req.user_context or {}).get("facet_schema")
 
+        # Tier 0: tenant's own configured LLM (Story MT-LLM-gate) — flagged off
+        # by default; only takes effect once the tenant has a real
+        # user_llm_configs row (source == "user"), never the shared fallback.
+        if SCORER_TENANT_ROUTING_ENABLED:
+            tenant_cfg = await _get_tenant_llm_config(client, req.user_id, role="scorer")
+            if tenant_cfg and tenant_cfg.get("source") == "user":
+                result = await _score_with_tenant_config(
+                    client, tenant_cfg, user_message, system_prompt, facet_schema,
+                )
+
         # Tier 1: University GPU server (highest quality, free)
-        if UNI_OLLAMA_URL and UNI_OLLAMA_MODEL and UNI_OLLAMA_API_KEY:
+        if result is None and UNI_OLLAMA_URL and UNI_OLLAMA_MODEL and UNI_OLLAMA_API_KEY:
             result = await score_with_uni_server(
                 client, user_message, system_prompt, facet_schema=facet_schema,
             )

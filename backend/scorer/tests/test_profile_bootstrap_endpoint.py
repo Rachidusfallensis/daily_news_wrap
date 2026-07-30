@@ -92,26 +92,40 @@ def client(db_session, monkeypatch):
     from routers import profile
     from services import config_bootstrap
 
-    # Stub the LLM so the bootstrap service is deterministic
-    async def fake_call_llm(_msg):
-        return json.dumps({
-            "domain_label": "Urban Mobility",
-            "scoring_clusters": [
-                {"name": "Modal Shift", "description": "transit substitution", "reward_level": 0.9},
+    _FAKE_BOOTSTRAP_JSON = json.dumps({
+        "domain_label": "Urban Mobility",
+        "scoring_clusters": [
+            {"name": "Modal Shift", "description": "transit substitution", "reward_level": 0.9},
+        ],
+        "facet_schema": {
+            "version": 1,
+            "dimensions": [
+                {"id": "phase", "label": "Phase", "type": "enum", "values": ["a", "b"]},
             ],
-            "facet_schema": {
-                "version": 1,
-                "dimensions": [
-                    {"id": "phase", "label": "Phase", "type": "enum", "values": ["a", "b"]},
-                ],
-            },
-            "keywords": ["mobility", "cycling"],
-            "suggested_source_queries": ["urban cycling adoption"],
-        })
+        },
+        "keywords": ["mobility", "cycling"],
+        "suggested_source_queries": ["urban cycling adoption"],
+    })
+
+    # Stub the LLM so the bootstrap service is deterministic. post_bootstrap
+    # now passes user_id, so generate() takes the tenant-routed path
+    # (services.llm_client.complete) rather than the legacy _call_llm ladder
+    # — stub both so this fixture works regardless of which path is live.
+    async def fake_call_llm(_msg):
+        return _FAKE_BOOTSTRAP_JSON
+
+    async def fake_complete(_config, _system_prompt, _user_message, **_kwargs):
+        return _FAKE_BOOTSTRAP_JSON
 
     monkeypatch.setattr(config_bootstrap, "_call_llm", fake_call_llm)
+    monkeypatch.setattr("services.llm_client.complete", fake_complete)
     config_bootstrap._cache_clear()
     profile._reset_bootstrap_rate_limits()
+
+    # Story MT-LLM-gate: pretend user 42 already has an "onboarding" LLM
+    # config row so the gate doesn't block these (pre-existing) test scenarios.
+    # test_requires_llm_config below explicitly un-mocks this to verify the gate.
+    monkeypatch.setattr(profile, "has_user_llm_config", lambda *_a, **_kw: True)
 
     # Seed a user_config row for user_id=42
     from database import UserConfig
@@ -194,6 +208,29 @@ class TestBootstrapPreview:
             assert resp.status_code in (401, 403)
         finally:
             app.dependency_overrides.clear()
+
+
+@SKIP_INTEGRATION
+class TestBootstrapLLMGate:
+    """Story MT-LLM-gate: bootstrap requires a real 'onboarding' LLM config row."""
+
+    def test_requires_llm_config(self, client, monkeypatch):
+        from routers import profile
+        monkeypatch.setattr(profile, "has_user_llm_config", lambda *_a, **_kw: False)
+        resp = client.post(
+            "/api/profile/bootstrap",
+            json={"thesis_text": "A study of urban mobility transitions."},
+        )
+        assert resp.status_code == 428
+
+    def test_proceeds_when_llm_config_present(self, client, monkeypatch):
+        from routers import profile
+        monkeypatch.setattr(profile, "has_user_llm_config", lambda *_a, **_kw: True)
+        resp = client.post(
+            "/api/profile/bootstrap",
+            json={"thesis_text": "A study of urban mobility transitions."},
+        )
+        assert resp.status_code == 200
 
 
 @SKIP_INTEGRATION

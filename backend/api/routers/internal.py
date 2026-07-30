@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -27,16 +26,8 @@ from models import InternalArticleCreate, InternalScoreUpdate, PromptCacheUpdate
 from routers.articles import _title_fingerprint, _pick
 from embedder import embed_article_async
 from sse import broadcast_new_article
-
-try:
-    _extractor_dir = os.path.join(os.path.dirname(__file__), "..", "..", "extractor")
-    if _extractor_dir not in sys.path:
-        sys.path.insert(0, _extractor_dir)
-    from providers import PROVIDER_REGISTRY  # noqa: E402
-    from providers.base import ResolvedSource  # noqa: E402
-except ImportError:
-    PROVIDER_REGISTRY = {}  # type: ignore[assignment]
-    ResolvedSource = None  # type: ignore[assignment,misc]
+from providers import PROVIDER_REGISTRY
+from providers.base import ResolvedSource
 
 router = APIRouter(prefix="/api/internal", tags=["internal"])
 
@@ -531,6 +522,31 @@ async def internal_put_prompt_cache(
     config.updated_at = datetime.now(timezone.utc)
     db.commit()
     return {"status": "ok"}
+
+
+@router.get("/users/{user_id}/llm-config")
+async def internal_get_llm_config(
+    user_id: int,
+    role: str = Query("scorer"),
+    x_internal_secret: str = Header(...),
+):
+    """Resolve a tenant's LLM config for the scorer container (Story MT-LLM-gate).
+
+    scorer.py has no DB access (separate deploy, no DB driver) — this is the
+    one place a decrypted API key crosses a network hop, gated the same way
+    as every other /api/internal/* endpoint (internal Docker network only).
+    """
+    if x_internal_secret != API_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from services.tenant_llm_router import TenantLLMRouter
+    config = TenantLLMRouter(user_id).get_config(role)
+    return {
+        "provider": config.provider,
+        "model": config.model,
+        "api_key": config.api_key,
+        "base_url": config.base_url,
+        "source": config.source,
+    }
 
 
 def _safe_json_loads(val: Optional[str]) -> list:

@@ -492,7 +492,7 @@ async def post_literature_review(
         member_ids = [a.id for a in members]
         member_titles = [a.title for a in members]
         try:
-            raw = await synthesize_cluster_json(clabel, user_block)
+            raw = await synthesize_cluster_json(clabel, user_block, user_id=user_id)
             cluster_payloads.append(_normalize_llm_cluster(raw, clabel, member_ids, member_titles))
         except Exception as e:
             logger.warning("lit_review_cluster_llm_failed", cluster=clabel, error=str(e))
@@ -610,12 +610,13 @@ def _build_external_paper_block(papers: List[dict], max_chars: int = 12000) -> s
 async def post_external_review(
     payload: ExternalReviewCreate,
     db: Session = Depends(get_db),
-    _: None = _auth,
+    current_user: dict = Depends(require_session),
 ):
     """Search Semantic Scholar → OpenAlex fallback → rerank → LLM state-of-the-art synthesis."""
     from external_review import rerank_papers, search_openalex, search_semantic_scholar
     from lit_review_llm import synthesize_external_review_json
 
+    user_id = current_user["id"]
     topic = payload.topic.strip()
     min_year = payload.min_year
 
@@ -645,7 +646,7 @@ async def post_external_review(
     paper_block = _build_external_paper_block(ranked)
 
     try:
-        raw = await synthesize_external_review_json(topic, paper_block)
+        raw = await synthesize_external_review_json(topic, paper_block, user_id=user_id)
     except Exception as e:
         logger.warning("external_review_synthesis_failed", error=str(e))
         raise HTTPException(status_code=503, detail="LLM synthesis failed — try again shortly.")

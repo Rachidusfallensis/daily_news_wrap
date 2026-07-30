@@ -223,23 +223,34 @@ Rules: comparison_table has one row per supplied article when possible; use empt
 async def synthesize_cluster_json(
     cluster_label: str,
     user_block: str,
+    user_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Run uni → ollama → openrouter; return parsed dict (may be partial on parse failure)."""
+    """Run the tenant's own LLM config when `user_id` is given; otherwise fall
+    back to the legacy uni → ollama → openrouter ladder. Return parsed dict
+    (may be partial on parse failure)."""
     t0 = time.perf_counter()
     tier_used = "none"
     content: Optional[str] = None
-    async with httpx.AsyncClient() as client:
-        content = await _chat_uni(client, SYSTEM_JSON, user_block)
+    if user_id is not None:
+        from services.llm_client import complete
+        from services.tenant_llm_router import TenantLLMRouter
+        tenant_config = TenantLLMRouter(user_id).get_config("onboarding")
+        content = await complete(tenant_config, SYSTEM_JSON, user_block)
         if content:
-            tier_used = "uni"
-        if not content:
-            content = await _chat_ollama(client, SYSTEM_JSON, user_block)
+            tier_used = "tenant"
+    else:
+        async with httpx.AsyncClient() as client:
+            content = await _chat_uni(client, SYSTEM_JSON, user_block)
             if content:
-                tier_used = "local"
-        if not content:
-            content = await _chat_openrouter(client, SYSTEM_JSON, user_block)
-            if content:
-                tier_used = "openrouter"
+                tier_used = "uni"
+            if not content:
+                content = await _chat_ollama(client, SYSTEM_JSON, user_block)
+                if content:
+                    tier_used = "local"
+            if not content:
+                content = await _chat_openrouter(client, SYSTEM_JSON, user_block)
+                if content:
+                    tier_used = "openrouter"
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     if not content:
@@ -271,25 +282,39 @@ async def synthesize_cluster_json(
     return parsed
 
 
-async def synthesize_external_review_json(topic: str, paper_block: str) -> Dict[str, Any]:
-    """Tiered LLM synthesis for external (SS/OpenAlex) state-of-the-art reviews."""
+async def synthesize_external_review_json(
+    topic: str, paper_block: str, user_id: Optional[int] = None
+) -> Dict[str, Any]:
+    """Tiered LLM synthesis for external (SS/OpenAlex) state-of-the-art reviews.
+
+    Routes through the tenant's own LLM config when `user_id` is given;
+    otherwise falls back to the legacy uni → ollama → openrouter ladder.
+    """
     user_msg = f"Topic: {topic}\n\nPapers:\n{paper_block}"
     t0 = time.perf_counter()
     tier_used = "none"
     content: Optional[str] = None
 
-    async with httpx.AsyncClient() as client:
-        content = await _chat_uni(client, _EXTERNAL_REVIEW_SYSTEM, user_msg)
+    if user_id is not None:
+        from services.llm_client import complete
+        from services.tenant_llm_router import TenantLLMRouter
+        tenant_config = TenantLLMRouter(user_id).get_config("onboarding")
+        content = await complete(tenant_config, _EXTERNAL_REVIEW_SYSTEM, user_msg)
         if content:
-            tier_used = "uni"
-        if not content:
-            content = await _chat_ollama(client, _EXTERNAL_REVIEW_SYSTEM, user_msg)
+            tier_used = "tenant"
+    else:
+        async with httpx.AsyncClient() as client:
+            content = await _chat_uni(client, _EXTERNAL_REVIEW_SYSTEM, user_msg)
             if content:
-                tier_used = "local"
-        if not content:
-            content = await _chat_openrouter(client, _EXTERNAL_REVIEW_SYSTEM, user_msg)
-            if content:
-                tier_used = "openrouter"
+                tier_used = "uni"
+            if not content:
+                content = await _chat_ollama(client, _EXTERNAL_REVIEW_SYSTEM, user_msg)
+                if content:
+                    tier_used = "local"
+            if not content:
+                content = await _chat_openrouter(client, _EXTERNAL_REVIEW_SYSTEM, user_msg)
+                if content:
+                    tier_used = "openrouter"
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     if not content:

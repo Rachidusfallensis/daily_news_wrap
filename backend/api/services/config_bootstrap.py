@@ -326,8 +326,13 @@ def _extract_json_object(text: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 
 
-async def generate(thesis_text: str) -> BootstrapResult:
+async def generate(thesis_text: str, user_id: Optional[int] = None) -> BootstrapResult:
     """Produce a `BootstrapResult` for the given thesis description.
+
+    When `user_id` is given, resolves the tenant's own LLM config via
+    `TenantLLMRouter` (role="onboarding") and routes through the generic
+    `llm_client.complete()` dispatcher. When omitted (legacy callers, tests),
+    falls back to the global env-var 3-tier ladder unchanged.
 
     Always returns a valid `BootstrapResult`. Sets `degraded=True` on any
     failure path (LLM unreachable, JSON parse failure, schema validation
@@ -337,7 +342,8 @@ async def generate(thesis_text: str) -> BootstrapResult:
     if not sanitized:
         return _degraded_result()
 
-    cache_key = hashlib.sha256(sanitized.encode("utf-8")).hexdigest()
+    cache_key_material = f"{user_id}:{sanitized}" if user_id is not None else sanitized
+    cache_key = hashlib.sha256(cache_key_material.encode("utf-8")).hexdigest()
     cached = _cache_get(cache_key)
     if cached is not None:
         logger.info("bootstrap_cache_hit", key_prefix=cache_key[:8])
@@ -347,7 +353,13 @@ async def generate(thesis_text: str) -> BootstrapResult:
 
     t0 = time.perf_counter()
     try:
-        content = await _call_llm(truncated)
+        if user_id is not None:
+            from services.llm_client import complete
+            from services.tenant_llm_router import TenantLLMRouter
+            tenant_config = TenantLLMRouter(user_id).get_config("onboarding")
+            content = await complete(tenant_config, _BOOTSTRAP_SYSTEM, truncated)
+        else:
+            content = await _call_llm(truncated)
     except Exception as e:
         # NFR-DA9 — never propagate; degrade cleanly so onboarding never blocks.
         logger.warning(

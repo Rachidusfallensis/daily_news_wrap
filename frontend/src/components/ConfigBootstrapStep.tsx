@@ -49,6 +49,7 @@ export default function ConfigBootstrapStep({ thesisText, onNext, onSkip, saving
   const [loading, setLoading] = useState(true)
   const [result, setResult] = useState<BootstrapResult | null>(null)
   const [editing, setEditing] = useState<EditState | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -79,7 +80,9 @@ export default function ConfigBootstrapStep({ thesisText, onNext, onSkip, saving
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [thesisText])
+  }, [thesisText, retryCount])
+
+  const handleRetry = useCallback(() => setRetryCount(c => c + 1), [])
 
   const handleContinue = useCallback(() => {
     const merged: BootstrapResult = {
@@ -143,7 +146,18 @@ export default function ConfigBootstrapStep({ thesisText, onNext, onSkip, saving
 
       {isDegraded && (
         <div className="rounded-md bg-yellow-50 border border-yellow-200 p-4 text-sm text-yellow-800 mb-6">
-          Auto-generation is currently unavailable. You can configure manually or skip and set up later.
+          <p className="mb-2">
+            We couldn't reach your configured LLM to auto-generate clusters. Check your provider
+            settings (API key, or that Ollama is running and the model is pulled), then retry — or
+            configure manually below.
+          </p>
+          <button
+            onClick={handleRetry}
+            disabled={loading}
+            className="px-3 py-1.5 rounded-lg border border-yellow-400 bg-white text-xs font-medium text-yellow-800 hover:bg-yellow-100 disabled:opacity-50 transition-colors"
+          >
+            {loading ? 'Retrying…' : 'Retry'}
+          </button>
         </div>
       )}
 

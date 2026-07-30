@@ -180,6 +180,10 @@ async def save_step3(
     set_llm_config(db, user_id, "scorer", body.provider, body.model, api_key_enc, body.base_url)
     set_llm_config(db, user_id, "review", body.provider, body.model, api_key_enc, body.base_url)
     set_llm_config(db, user_id, "ask", body.provider, body.model, api_key_enc, body.base_url)
+    # Onboarding: bootstrap (clusters) + discovery (sources) resolve via this
+    # role — without it, has_user_llm_config("onboarding") gates them out
+    # right after this step, even though the user just configured their LLM.
+    set_llm_config(db, user_id, "onboarding", body.provider, body.model, api_key_enc, body.base_url)
 
     # Embedder: Ollama by default (free, local)
     ollama_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
@@ -190,13 +194,6 @@ async def save_step3(
     TenantLLMRouter.invalidate(user_id)
     logger.info("onboarding_step3_saved", user_id=user_id, provider=body.provider)
     return {"status": "ok"}
-
-
-@router.post("/step3/skip")
-async def skip_step3(current_user: dict = Depends(require_session)):
-    """Skip LLM config — user will use global env var fallback."""
-    logger.info("onboarding_step3_skipped", user_id=current_user["id"])
-    return {"status": "skipped"}
 
 
 # ── Preview top scored articles (for Step 4) ──────────────────────────────

@@ -189,6 +189,15 @@ async def verify_connection(provider: str, api_key: str, base_url: str = "") -> 
             url = (base_url or "http://host.docker.internal:11434").rstrip("/") + "/api/tags"
             return await _get_ok(url)
 
+        if provider == "anthropic":
+            url = "https://api.anthropic.com/v1/models"
+            headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+            return await _get_ok(url, headers=headers)
+
+        if provider == "gemini":
+            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+            return await _get_ok(url)
+
         return {"ok": False, "error": f"Verification not supported for provider '{provider}'"}
     except Exception as e:
         logger.warning("llm_verify_failed", provider=provider, error=str(e))

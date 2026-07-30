@@ -1,9 +1,10 @@
 """Tests for source_discovery.py (Story 13-1 — Discovery EXPAND)."""
 
+import asyncio
 import json
 import os
 import sys
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 _api_dir = os.path.join(os.path.dirname(__file__))
 for p in [_api_dir]:
@@ -126,6 +127,62 @@ def test_expand_returns_valid_result(mock_call_llm):
     assert result.language == "en"
     assert result.degraded is False
     mock_call_llm.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Tenant routing (Story MT-LLM-gate)
+# ---------------------------------------------------------------------------
+
+
+def test_expand_user_id_routes_via_tenant_llm_router():
+    cache_clear()
+    fake_config = MagicMock(provider="openrouter", model="google/gemini-flash-1.5")
+    fake_router_instance = MagicMock()
+    fake_router_instance.get_config.return_value = fake_config
+
+    with (
+        patch("services.tenant_llm_router.TenantLLMRouter", lambda user_id: fake_router_instance),
+        patch("services.llm_client.complete", new=AsyncMock(return_value=json.dumps(SAMPLE_RESPONSE))),
+        patch("services.source_discovery._call_llm", new=AsyncMock()) as mock_legacy,
+    ):
+        result = asyncio.run(expand("urban mobility policy", user_id=42))
+
+    assert result.degraded is False
+    assert result.field_label == "Computational Linguistics"
+    mock_legacy.assert_not_awaited()
+    fake_router_instance.get_config.assert_called_once_with("onboarding")
+
+
+@patch("services.source_discovery._call_llm", new_callable=AsyncMock)
+def test_expand_user_id_none_keeps_legacy_path(mock_call_llm):
+    """Regression guard: omitting user_id must still hit the legacy _call_llm ladder."""
+    cache_clear()
+    mock_call_llm.return_value = json.dumps(SAMPLE_RESPONSE)
+    result = run_expand("urban mobility policy")
+    assert result.degraded is False
+    mock_call_llm.assert_awaited_once()
+
+
+def test_expand_cache_isolated_per_user_id():
+    """Two tenants with identical thesis text must not share a cached LLM response."""
+    cache_clear()
+    call_count = {"n": 0}
+
+    async def fake_complete(*_args, **_kwargs):
+        call_count["n"] += 1
+        return json.dumps(SAMPLE_RESPONSE)
+
+    fake_router_instance = MagicMock()
+    fake_router_instance.get_config.return_value = MagicMock(provider="openrouter", model="m")
+
+    with (
+        patch("services.tenant_llm_router.TenantLLMRouter", lambda user_id: fake_router_instance),
+        patch("services.llm_client.complete", new=fake_complete),
+    ):
+        asyncio.run(expand("identical thesis text", user_id=1))
+        asyncio.run(expand("identical thesis text", user_id=2))
+
+    assert call_count["n"] == 2  # each tenant triggers its own LLM call, no cross-tenant cache hit
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +311,9 @@ def run_tests():
         ("extract_balanced_brace", test_extract_balanced_brace),
         ("extract_returns_none_on_empty", test_extract_returns_none_on_empty),
         ("expand_returns_valid_result", test_expand_returns_valid_result),
+        ("expand_user_id_routes_via_tenant_llm_router", test_expand_user_id_routes_via_tenant_llm_router),
+        ("expand_user_id_none_keeps_legacy_path", test_expand_user_id_none_keeps_legacy_path),
+        ("expand_cache_isolated_per_user_id", test_expand_cache_isolated_per_user_id),
         ("expand_cache_prevents_second_llm_call", test_expand_cache_prevents_second_llm_call),
         ("expand_cache_misses_for_different_text", test_expand_cache_misses_for_different_text),
         ("expand_degraded_on_llm_none", test_expand_degraded_on_llm_none),

@@ -93,22 +93,26 @@ def _get_run(run_id: int) -> dict:
 
 
 def test_job_status_transitions_to_done():
-    """Happy path: expand + resolve succeed → status = 'done'."""
+    """Happy path: expand + resolve succeed → status = 'done'.
+
+    run_discovery_job calls _resolve_all/_cap_candidates/_verify_all/
+    _rank_and_group directly (not the resolve_verify_rank() wrapper) — mock
+    those, not the wrapper, or this silently exercises the real network-calling
+    pipeline instead of the mock.
+    """
     from services.source_discovery import run_discovery_job
 
     run_id = _insert_run(user_id=1)
-
-    mock_pack = source_discovery.DiscoveryPack(
-        sources=[source_discovery.DiscoveredItem(name="arXiv", provider="arxiv", verified=True)],
-        venues=[],
-        authors=[],
+    fake_candidate = source_discovery.DiscoveryCandidate(
+        name="arXiv", provider="arxiv", relevance_score=1.0, verified=True,
     )
 
     with (
         patch.object(source_discovery, "expand", new=AsyncMock(return_value=source_discovery.ExpandResult(
             field_label="ML", concepts=["neural networks"], degraded=False
         ))),
-        patch.object(source_discovery, "resolve_verify_rank", new=AsyncMock(return_value=mock_pack)),
+        patch.object(source_discovery, "_resolve_all", new=AsyncMock(return_value=[fake_candidate])),
+        patch.object(source_discovery, "_verify_all", new=AsyncMock(return_value=[fake_candidate])),
     ):
         asyncio.run(run_discovery_job(run_id=run_id, user_id=1, thesis_text="ML thesis"))
 
@@ -116,6 +120,24 @@ def test_job_status_transitions_to_done():
     assert result["status"] == "done"
     assert result["pack"] is not None
     assert result["pack"]["sources"][0]["name"] == "arXiv"
+
+
+def test_job_threads_user_id_into_expand():
+    """Story MT-LLM-gate: run_discovery_job must pass user_id through to expand()
+    so the LLM call resolves the tenant's own config, not the shared fallback."""
+    from services.source_discovery import run_discovery_job
+
+    run_id = _insert_run(user_id=1)
+
+    with (
+        patch.object(source_discovery, "expand", new=AsyncMock(
+            return_value=source_discovery.ExpandResult(field_label="ML", degraded=False)
+        )) as mock_expand,
+        patch.object(source_discovery, "_resolve_all", new=AsyncMock(return_value=[])),
+    ):
+        asyncio.run(run_discovery_job(run_id=run_id, user_id=1, thesis_text="ML thesis"))
+
+    mock_expand.assert_awaited_once_with("ML thesis", user_id=1)
 
 
 def test_job_status_error_on_expand_failure():
@@ -142,7 +164,7 @@ def test_job_status_error_on_resolve_failure():
         patch.object(source_discovery, "expand", new=AsyncMock(return_value=source_discovery.ExpandResult(
             field_label="ML", concepts=["ml"], degraded=False
         ))),
-        patch.object(source_discovery, "resolve_verify_rank", new=AsyncMock(side_effect=RuntimeError("providers down"))),
+        patch.object(source_discovery, "_resolve_all", new=AsyncMock(side_effect=RuntimeError("providers down"))),
     ):
         asyncio.run(run_discovery_job(run_id=run_id, user_id=1, thesis_text="ML thesis"))
 
@@ -155,11 +177,10 @@ def test_job_with_keywords_skips_expand_llm():
     from services.source_discovery import run_discovery_job
 
     run_id = _insert_run(user_id=1)
-    mock_pack = source_discovery.DiscoveryPack()
 
     with (
         patch.object(source_discovery, "expand", new=AsyncMock(return_value=source_discovery.ExpandResult())) as mock_expand,
-        patch.object(source_discovery, "resolve_verify_rank", new=AsyncMock(return_value=mock_pack)),
+        patch.object(source_discovery, "_resolve_all", new=AsyncMock(return_value=[])),
     ):
         asyncio.run(run_discovery_job(
             run_id=run_id,
@@ -180,12 +201,11 @@ def test_job_broadcasts_sse_events():
     q: asyncio.Queue = asyncio.Queue(maxsize=50)
     _sse_queues[1] = {"test_client": q}
 
-    mock_pack = source_discovery.DiscoveryPack()
     with (
         patch.object(source_discovery, "expand", new=AsyncMock(return_value=source_discovery.ExpandResult(
             field_label="ML", degraded=False
         ))),
-        patch.object(source_discovery, "resolve_verify_rank", new=AsyncMock(return_value=mock_pack)),
+        patch.object(source_discovery, "_resolve_all", new=AsyncMock(return_value=[])),
     ):
         asyncio.run(run_discovery_job(run_id=run_id, user_id=1, thesis_text="ML thesis"))
 
@@ -234,13 +254,32 @@ def _make_client():
 def test_post_run_returns_202():
     client, app = _make_client()
     try:
-        with patch("routers.discovery.asyncio") as mock_asyncio:
+        with (
+            patch("routers.discovery.asyncio") as mock_asyncio,
+            patch("routers.discovery.has_user_llm_config", return_value=True),
+        ):
             mock_asyncio.create_task = MagicMock()
             resp = client.post("/api/discovery/run", json={"thesis_text": "A unique thesis ABC"})
         assert resp.status_code == 202
         data = resp.json()
         assert "run_id" in data
         assert data["status"] in ("pending", "done")
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_post_run_requires_llm_config():
+    """Story MT-LLM-gate: no user_llm_configs row for 'onboarding' → 428, no task spawned."""
+    client, app = _make_client()
+    try:
+        with (
+            patch("routers.discovery.asyncio") as mock_asyncio,
+            patch("routers.discovery.has_user_llm_config", return_value=False),
+        ):
+            mock_asyncio.create_task = MagicMock()
+            resp = client.post("/api/discovery/run", json={"thesis_text": "Some thesis"})
+        assert resp.status_code == 428
+        mock_asyncio.create_task.assert_not_called()
     finally:
         app.dependency_overrides.clear()
 
@@ -285,7 +324,10 @@ def test_post_run_dedup_returns_existing_completed_run():
         input_hash = hashlib.sha256(sanitized.encode()).hexdigest()
         run_id = _insert_run(user_id=1, status="done", expand_input=input_hash)
 
-        with patch("routers.discovery.asyncio") as mock_asyncio:
+        with (
+            patch("routers.discovery.asyncio") as mock_asyncio,
+            patch("routers.discovery.has_user_llm_config", return_value=True),
+        ):
             mock_asyncio.create_task = MagicMock()
             resp = client.post("/api/discovery/run", json={"thesis_text": thesis})
 

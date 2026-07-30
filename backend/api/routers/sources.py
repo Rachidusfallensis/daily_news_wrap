@@ -1,6 +1,4 @@
 import json
-import os
-import sys
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,13 +8,8 @@ from sqlalchemy.orm import Session
 from auth import require_session
 from database import Source, UserSourceSubscription, get_db
 from models import SourceOut
-
-_extractor_dir = os.path.join(os.path.dirname(__file__), "..", "..", "extractor")
-if _extractor_dir not in sys.path:
-    sys.path.insert(0, _extractor_dir)
-
-from providers import PROVIDER_REGISTRY  # noqa: E402
-from providers.base import SourceIntent, SourceProvider  # noqa: E402
+from providers import PROVIDER_REGISTRY
+from providers.base import SourceIntent, SourceProvider
 
 router = APIRouter()
 _auth = Depends(require_session)

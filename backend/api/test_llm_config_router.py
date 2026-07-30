@@ -147,6 +147,17 @@ def test_detect_anthropic(client):
     assert resp.json()["provider"] == "anthropic"
 
 
+def test_put_onboarding_role_accepted(client, fernet_key):
+    """PUT /api/llm-config/onboarding → accepté (rôle dédié bootstrap/discovery, Story MT-LLM-gate)."""
+    resp = client.put("/api/llm-config/onboarding", json={
+        "provider": "openrouter", "model": "google/gemini-flash-1.5", "api_key": "sk-or-onboard",
+    })
+    assert resp.status_code == 200
+    resp2 = client.get("/api/llm-config")
+    roles = [item["role"] for item in resp2.json()]
+    assert "onboarding" in roles
+
+
 def test_invalid_role_rejected(client):
     resp = client.put("/api/llm-config/unknown_role", json={
         "provider": "openrouter", "model": "gemini", "api_key": "sk-or-x"

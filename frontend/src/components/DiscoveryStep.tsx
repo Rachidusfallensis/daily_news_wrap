@@ -8,6 +8,7 @@ interface DiscoveryStepProps {
   thesisText: string
   onApply: (accepted: AcceptedItems) => Promise<void>
   onSkip: () => void
+  onRetry: () => void | Promise<void>
   onEvent?: (event: { type: string; [key: string]: unknown }) => void
 }
 
@@ -28,6 +29,12 @@ const STAGE_LABELS: Record<Stage, string> = {
   done: 'Done',
   error: 'Unavailable',
 }
+// Verifying dozens of provenance URLs against rate-limited academic providers
+// can legitimately take a minute or more — this note only shows during that
+// stage, where the wait is actually longest.
+const STAGE_HINTS: Partial<Record<Stage, string>> = {
+  verifying: "Checking each source against its provider — this step can take a minute or two for a large batch.",
+}
 
 interface RunStatus {
   run_id: number
@@ -36,14 +43,19 @@ interface RunStatus {
 }
 
 const POLL_INTERVAL_MS = 2000
-const TIMEOUT_MS = 30_000
+// Discovery legitimately runs long: verifying dozens of sources against
+// rate-limited academic providers can take 60-90s+ on its own, on top of
+// expand/resolve/rank. 30s was cutting off runs that were still succeeding
+// in the background — give it real headroom instead.
+const TIMEOUT_MS = 180_000
 
-export default function DiscoveryStep({ runId, thesisText, onApply, onSkip, onEvent }: DiscoveryStepProps) {
+export default function DiscoveryStep({ runId, thesisText, onApply, onSkip, onRetry, onEvent }: DiscoveryStepProps) {
   const [stage, setStage] = useState<Stage>('expanding')
   const [degraded, setDegraded] = useState(false)
   const [pack, setPack] = useState<DiscoveryPack | null>(null)
   const [accepted, setAccepted] = useState<Set<string>>(new Set())
   const [applying, setApplying] = useState(false)
+  const [retrying, setRetrying] = useState(false)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const doneRef = useRef(false)
@@ -136,6 +148,15 @@ export default function DiscoveryStep({ runId, thesisText, onApply, onSkip, onEv
     }
   }, [onEvent, runId, fetchStatus, stopPolling])
 
+  const handleRetry = useCallback(async () => {
+    setRetrying(true)
+    try {
+      await onRetry()
+    } finally {
+      setRetrying(false)
+    }
+  }, [onRetry])
+
   const toggleItem = useCallback((item: DiscoveredItem) => {
     const key = `${item.name}|${item.provider}`
     setAccepted(prev => {
@@ -204,15 +225,15 @@ export default function DiscoveryStep({ runId, thesisText, onApply, onSkip, onEv
       <div>
         <div className="rounded-md bg-yellow-50 border border-yellow-200 p-4 text-sm text-yellow-800 mb-6">
           {degraded
-            ? 'Source discovery timed out. You can skip this step and configure sources later in Settings → Sources.'
-            : 'Source discovery is currently unavailable. You can skip this step and configure sources later.'}
+            ? 'Source discovery timed out. This can happen if your configured LLM is slow or unreachable, or if a source provider is temporarily down. Check your provider settings (API key, or that Ollama is running with the right model pulled), then retry.'
+            : "Source discovery failed. This can be your configured LLM being unreachable, or a temporary issue reaching academic source providers — not necessarily your LLM setup. Check your provider settings if you suspect that, then retry."}
         </div>
         <div className="flex items-center justify-between mt-6">
-          <button onClick={onSkip} className="px-4 py-2 rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors">
-            Skip
+          <button onClick={onSkip} disabled={retrying} className="px-4 py-2 rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50">
+            Skip — configure sources later
           </button>
-          <button onClick={onSkip} className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors">
-            Continue →
+          <button onClick={handleRetry} disabled={retrying} className="px-5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors">
+            {retrying ? 'Retrying…' : 'Retry →'}
           </button>
         </div>
       </div>
@@ -225,8 +246,11 @@ export default function DiscoveryStep({ runId, thesisText, onApply, onSkip, onEv
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
         <Loader2 className="w-8 h-8 animate-spin text-accent mb-4" />
-        <p className="text-sm text-text-muted mb-4">{STAGE_LABELS[stage]}</p>
-        <div className="w-64 bg-bg-elevated rounded-full h-1.5 overflow-hidden">
+        <p className="text-sm text-text-muted mb-1">{STAGE_LABELS[stage]}</p>
+        {STAGE_HINTS[stage] && (
+          <p className="text-xs text-text-muted/70 mb-3 max-w-xs">{STAGE_HINTS[stage]}</p>
+        )}
+        <div className="w-64 bg-bg-elevated rounded-full h-1.5 overflow-hidden mt-3">
           <div
             className="h-full bg-accent rounded-full transition-all duration-500"
             style={{ width: `${progressPct}%` }}

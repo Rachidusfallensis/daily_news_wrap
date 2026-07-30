@@ -11,7 +11,7 @@ interface OnboardingWizardProps {
   onComplete: () => void
 }
 
-const STEPS = ['Thesis', 'Clusters', 'Sources', 'LLM', 'First run']
+const STEPS = ['Thesis', 'LLM', 'Sources', 'Clusters', 'First run']
 
 export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const [step, setStep] = useState(1)
@@ -51,13 +51,8 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         return
       }
       setSaving(false)
-      // Fire bootstrap warm-up in background — do not await
-      fetch('/api/profile/bootstrap', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ thesis_text: thesisTitle.trim() }),
-      }).catch(() => {})
+      // No LLM configured yet at this point (that's the next step) — bootstrap
+      // and discovery are triggered from handleLLMNext once it's in place.
       setStep(2)
     } catch {
       setError('Network error')
@@ -86,19 +81,9 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         setSaving(false)
         return
       }
-      // Fire discovery job in background — navigate immediately
-      const keywords = result?.keywords ?? []
-      fetch('/api/discovery/run', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ thesis_text: thesisTitle, keywords }),
-      })
-        .then(r => r.ok ? r.json() : null)
-        .then(data => { if (data?.run_id) setDiscoveryRunId(data.run_id) })
-        .catch(() => {})
+      // Discovery already ran right after the LLM step — clusters are last.
       setSaving(false)
-      setStep(3)
+      setStep(5)
     } catch {
       setError('Network error')
       setSaving(false)
@@ -106,7 +91,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   }
 
   const handleBootstrapSkip = () => {
-    setStep(3)
+    setStep(5)
   }
 
   const handleApplyTemplate = async (templateId: number) => {
@@ -142,23 +127,25 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         setSaving(false)
         return
       }
-      // Fire discovery job with no keywords
-      fetch('/api/discovery/run', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ thesis_text: thesisTitle, keywords: [] }),
-      })
-        .then(r => r.ok ? r.json() : null)
-        .then(data => { if (data?.run_id) setDiscoveryRunId(data.run_id) })
-        .catch(() => {})
+      // Discovery already ran right after the LLM step — clusters are last.
       setSaving(false)
-      setStep(3)
+      setStep(5)
     } catch {
       setError('Network error')
       setSaving(false)
     }
   }
+
+  const triggerDiscoveryRun = () =>
+    fetch('/api/discovery/run', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thesis_text: thesisTitle, keywords: [] }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.run_id) setDiscoveryRunId(data.run_id) })
+      .catch(() => {})
 
   const handleDiscoveryApply = async (accepted: AcceptedItems) => {
     // Use the run-based endpoint when possible — marks discovery_runs.status='applied'
@@ -194,17 +181,25 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         setSaving(false)
         return
       }
+      // LLM is configured now — fire discovery + bootstrap warm-up in the
+      // background using the tenant's own LLM (Sources step polls the run;
+      // Clusters step re-fetches bootstrap once it's rendered further down).
+      // If either fails (LLM unreachable), the Sources/Clusters steps surface
+      // their own error state with a Retry action — nothing here needs to
+      // block navigation on it.
+      triggerDiscoveryRun()
+      fetch('/api/profile/bootstrap', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thesis_text: thesisTitle.trim() }),
+      }).catch(() => {})
       setSaving(false)
-      setStep(5)
+      setStep(3)
     } catch {
       setError('Network error')
       setSaving(false)
     }
-  }
-
-  const handleLLMSkip = () => {
-    fetch('/api/onboarding/step3/skip', { method: 'POST', credentials: 'include' }).catch(() => {})
-    setStep(5)
   }
 
   const handleComplete = async () => {
@@ -347,6 +342,34 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   }
 
   if (step === 2) {
+    return (
+      <div className="flex h-screen w-screen items-start justify-center bg-bg-base pt-16 overflow-y-auto">
+        <div className="w-full max-w-2xl px-6 pb-12">
+          <StepIndicator />
+          <LLMConfigStep onNext={handleLLMNext} saving={saving} />
+        </div>
+      </div>
+    )
+  }
+
+  if (step === 3) {
+    return (
+      <div className="flex h-screen w-screen items-start justify-center bg-bg-base pt-16 overflow-y-auto">
+        <div className="w-full max-w-2xl px-6 pb-12">
+          <StepIndicator />
+          <DiscoveryStep
+            runId={discoveryRunId}
+            thesisText={thesisTitle}
+            onApply={handleDiscoveryApply}
+            onSkip={() => setStep(4)}
+            onRetry={triggerDiscoveryRun}
+          />
+        </div>
+      </div>
+    )
+  }
+
+  if (step === 4) {
     const hasThesis = thesisTitle.trim().length > 0
     const showBootstrap = hasThesis && useBootstrap
     return (
@@ -498,33 +521,6 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
             </div>
           )}
           {error && <p className="text-danger text-xs mt-4">{error}</p>}
-        </div>
-      </div>
-    )
-  }
-
-  if (step === 3) {
-    return (
-      <div className="flex h-screen w-screen items-start justify-center bg-bg-base pt-16 overflow-y-auto">
-        <div className="w-full max-w-2xl px-6 pb-12">
-          <StepIndicator />
-          <DiscoveryStep
-            runId={discoveryRunId}
-            thesisText={thesisTitle}
-            onApply={handleDiscoveryApply}
-            onSkip={() => setStep(4)}
-          />
-        </div>
-      </div>
-    )
-  }
-
-  if (step === 4) {
-    return (
-      <div className="flex h-screen w-screen items-start justify-center bg-bg-base pt-16 overflow-y-auto">
-        <div className="w-full max-w-2xl px-6 pb-12">
-          <StepIndicator />
-          <LLMConfigStep onNext={handleLLMNext} onSkip={handleLLMSkip} saving={saving} />
         </div>
       </div>
     )

@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from auth import require_session
 from services import source_discovery
+from services.tenant_llm_router import has_user_llm_config
 
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
 _auth = Depends(require_session)
@@ -84,7 +85,7 @@ async def post_expand(
             detail="Expand rate limit exceeded",
             headers={"Retry-After": str(retry_after)},
         )
-    result = await source_discovery.expand(body.thesis_text)
+    result = await source_discovery.expand(body.thesis_text, user_id=user_id)
     logger.info(
         "expand_endpoint",
         user_id=user_id,
@@ -342,6 +343,8 @@ async def post_discovery_run(
     from database import engine as _engine
 
     user_id = current_user["id"]
+    if not has_user_llm_config(user_id, "onboarding"):
+        raise HTTPException(status_code=428, detail="LLM provider not configured")
     retry_after = _check_run_rate_limit(user_id)
     if retry_after is not None:
         raise HTTPException(

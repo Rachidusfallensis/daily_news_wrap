@@ -33,7 +33,6 @@ function mockUrl(input: RequestInfo | URL): string {
 
 describe('LLMConfigStep', () => {
   const onNext = vi.fn()
-  const onSkip = vi.fn()
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -48,7 +47,7 @@ describe('LLMConfigStep', () => {
       return new Response(JSON.stringify({}), { status: 200 })
     })
 
-    render(<LLMConfigStep onNext={onNext} onSkip={onSkip} />)
+    render(<LLMConfigStep onNext={onNext} />)
 
     await waitFor(() => {
       expect(screen.getByText('OpenRouter')).toBeInTheDocument()
@@ -66,7 +65,7 @@ describe('LLMConfigStep', () => {
     })
 
     const user = userEvent.setup()
-    render(<LLMConfigStep onNext={onNext} onSkip={onSkip} />)
+    render(<LLMConfigStep onNext={onNext} />)
 
     await waitFor(() => {
       expect(screen.getByText('OpenRouter')).toBeInTheDocument()
@@ -74,6 +73,33 @@ describe('LLMConfigStep', () => {
     await user.click(screen.getByText('OpenRouter'))
 
     expect(screen.getByLabelText('API key')).toBeInTheDocument()
+  })
+
+  it('shows an editable Model field defaulting to the recommended model, and submits the edited value', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = mockUrl(input)
+      if (url === '/api/llm-config/providers') {
+        return new Response(JSON.stringify(mockProviders), { status: 200 })
+      }
+      return new Response(JSON.stringify({}), { status: 200 })
+    })
+
+    const user = userEvent.setup()
+    render(<LLMConfigStep onNext={onNext} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Ollama (modèles locaux)')).toBeInTheDocument()
+    })
+    await user.click(screen.getByText('Ollama (modèles locaux)'))
+
+    const modelInput = screen.getByLabelText('Model') as HTMLInputElement
+    expect(modelInput.value).toBe('llama3.2:3b') // recommended_model default, but visible & editable
+
+    await user.clear(modelInput)
+    await user.type(modelInput, 'mistral:7b')
+    await user.click(screen.getByText('Valider'))
+
+    expect(onNext).toHaveBeenCalledWith(expect.objectContaining({ provider: 'ollama', model: 'mistral:7b' }))
   })
 
   it('shows "Aucune clé requise" when Ollama is selected', async () => {
@@ -86,7 +112,7 @@ describe('LLMConfigStep', () => {
     })
 
     const user = userEvent.setup()
-    render(<LLMConfigStep onNext={onNext} onSkip={onSkip} />)
+    render(<LLMConfigStep onNext={onNext} />)
 
     await waitFor(() => {
       expect(screen.getByText('Ollama (modèles locaux)')).toBeInTheDocument()
@@ -110,7 +136,7 @@ describe('LLMConfigStep', () => {
     })
 
     const user = userEvent.setup()
-    render(<LLMConfigStep onNext={onNext} onSkip={onSkip} />)
+    render(<LLMConfigStep onNext={onNext} />)
 
     await waitFor(() => {
       expect(screen.getByLabelText('API key')).toBeInTheDocument()
@@ -124,7 +150,25 @@ describe('LLMConfigStep', () => {
     })
   })
 
-  it('calls onSkip when "Passer" is clicked', async () => {
+  it('has no skip/bypass option — LLM config is a hard gate', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = mockUrl(input)
+      if (url === '/api/llm-config/providers') {
+        return new Response(JSON.stringify(mockProviders), { status: 200 })
+      }
+      return new Response(JSON.stringify({}), { status: 200 })
+    })
+
+    render(<LLMConfigStep onNext={onNext} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('OpenRouter')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText(/Passer/)).not.toBeInTheDocument()
+  })
+
+  it('disables "Valider" until a non-Ollama provider passes the connection test', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
       const url = mockUrl(input)
       if (url === '/api/llm-config/providers') {
@@ -134,14 +178,13 @@ describe('LLMConfigStep', () => {
     })
 
     const user = userEvent.setup()
-    render(<LLMConfigStep onNext={onNext} onSkip={onSkip} />)
+    render(<LLMConfigStep onNext={onNext} />)
 
     await waitFor(() => {
       expect(screen.getByText('OpenRouter')).toBeInTheDocument()
     })
+    await user.click(screen.getByText('OpenRouter'))
 
-    await user.click(screen.getByText(/Passer/))
-    expect(onSkip).toHaveBeenCalledOnce()
-    expect(onNext).not.toHaveBeenCalled()
+    expect(screen.getByText('Valider')).toBeDisabled()
   })
 })

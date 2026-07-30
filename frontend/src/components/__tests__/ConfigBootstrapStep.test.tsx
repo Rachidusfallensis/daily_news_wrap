@@ -167,7 +167,7 @@ describe('ConfigBootstrapStep', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText(/Auto-generation is currently unavailable/)).toBeInTheDocument()
+      expect(screen.getByText(/We couldn't reach your configured LLM/)).toBeInTheDocument()
     })
   })
 
@@ -212,7 +212,33 @@ describe('ConfigBootstrapStep', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText(/Auto-generation is currently unavailable/)).toBeInTheDocument()
+      expect(screen.getByText(/We couldn't reach your configured LLM/)).toBeInTheDocument()
     })
+  })
+
+  it('retries the bootstrap fetch and recovers when Retry is clicked', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new Error('Network error'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(mockBootstrapResult), { status: 200 }))
+
+    const user = userEvent.setup()
+    render(
+      <ConfigBootstrapStep
+        thesisText="test"
+        onNext={onNext}
+        onSkip={onSkip}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/We couldn't reach your configured LLM/)).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByText('Retry'))
+
+    await waitFor(() => {
+      expect(screen.queryByText(/We couldn't reach your configured LLM/)).not.toBeInTheDocument()
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

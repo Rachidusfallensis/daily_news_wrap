@@ -21,7 +21,7 @@ from services.tenant_llm_router import TenantLLMRouter
 router = APIRouter(prefix="/api/llm-config", tags=["llm-config"])
 logger = structlog.get_logger().bind(service="llm_config")
 
-VALID_ROLES = {"scorer", "embedder", "review", "ask"}
+VALID_ROLES = {"scorer", "embedder", "review", "ask", "onboarding"}
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────

@@ -78,6 +78,30 @@ def test_cache_invalidate(monkeypatch, fernet_key):
     assert (5, "scorer") not in _cache
 
 
+def test_onboarding_role_env_fallback(monkeypatch):
+    """role='onboarding' (bootstrap/discovery) resolves like scorer: openrouter + SCORER_MODEL default."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-global")
+    monkeypatch.setenv("SCORER_MODEL", "google/gemini-flash-1.5")
+    with patch("services.tenant_llm_router.get_llm_config", return_value=None):
+        config = TenantLLMRouter(user_id=8).get_config("onboarding")
+    assert config.source == "env"
+    assert config.provider == "openrouter"
+    assert config.api_key == "sk-or-global"
+    assert config.model == "google/gemini-flash-1.5"
+
+
+def test_onboarding_role_from_db_user(monkeypatch, fernet_key):
+    """role='onboarding' config DB user prend priorité sur env vars, comme les autres rôles."""
+    from llm_crypto import encrypt_key
+    enc = encrypt_key("sk-or-onboarding-user")
+    mock_row = MagicMock(provider="openrouter", model="gpt-4o-mini",
+                         api_key_enc=enc, base_url=None)
+    with patch("services.tenant_llm_router.get_llm_config", return_value=mock_row):
+        config = TenantLLMRouter(user_id=3).get_config("onboarding")
+    assert config.source == "user"
+    assert config.api_key == "sk-or-onboarding-user"
+
+
 def test_embedder_fallback_no_api_key(monkeypatch):
     """role='embedder' → provider='ollama', base_url depuis OLLAMA_URL, api_key=None (pas de clé pour Ollama)."""
     monkeypatch.setenv("OLLAMA_URL", "http://host.docker.internal:11434")

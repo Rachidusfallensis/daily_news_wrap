@@ -30,17 +30,19 @@ logger = structlog.get_logger().bind(service="tenant_llm_router")
 # ── Fallback env var mapping per role ────────────────────────────────────────
 # Maps functional role → (provider_env, model_env, base_url_env)
 _ENV_FALLBACK: dict[str, tuple[str, str, str]] = {
-    "scorer":   ("OPENROUTER_API_KEY", "SCORER_MODEL",        "OPENROUTER_BASE_URL"),
-    "embedder": ("OLLAMA_URL",         "OLLAMA_EMBED_MODEL",  ""),
-    "review":   ("OPENROUTER_API_KEY", "REVIEW_MODEL",        "OPENROUTER_BASE_URL"),
-    "ask":      ("OPENROUTER_API_KEY", "ASK_MODEL",           "OPENROUTER_BASE_URL"),
+    "scorer":     ("OPENROUTER_API_KEY", "SCORER_MODEL",        "OPENROUTER_BASE_URL"),
+    "embedder":   ("OLLAMA_URL",         "OLLAMA_EMBED_MODEL",  ""),
+    "review":     ("OPENROUTER_API_KEY", "REVIEW_MODEL",        "OPENROUTER_BASE_URL"),
+    "ask":        ("OPENROUTER_API_KEY", "ASK_MODEL",           "OPENROUTER_BASE_URL"),
+    "onboarding": ("OPENROUTER_API_KEY", "SCORER_MODEL",        "OPENROUTER_BASE_URL"),
 }
 
 _DEFAULT_MODELS: dict[str, str] = {
-    "scorer":   "google/gemini-flash-1.5",
-    "embedder": "nomic-embed-text",
-    "review":   "google/gemini-flash-1.5",
-    "ask":      "google/gemini-flash-1.5",
+    "scorer":     "google/gemini-flash-1.5",
+    "embedder":   "nomic-embed-text",
+    "review":     "google/gemini-flash-1.5",
+    "ask":        "google/gemini-flash-1.5",
+    "onboarding": "google/gemini-flash-1.5",
 }
 
 
@@ -56,6 +58,22 @@ class LLMConfig:
 # Module-level cache (shared across requests)
 _cache: dict[tuple[int, str], LLMConfig] = {}
 _lock = threading.Lock()
+
+
+def has_user_llm_config(user_id: int, role: str = "onboarding") -> bool:
+    """True iff a real `user_llm_configs` row exists for (user_id, role).
+
+    Used to gate onboarding LLM calls (bootstrap/discovery) — deliberately
+    checks the DB row directly rather than resolving through the router,
+    since the router's env-var fallback tier must stay available for
+    self-hosted/local-dev use without turning that fallback into an implicit
+    "pass" for the multi-tenant SaaS gate.
+    """
+    db = SessionLocal()
+    try:
+        return get_llm_config(db, user_id, role) is not None
+    finally:
+        db.close()
 
 
 class TenantLLMRouter:
