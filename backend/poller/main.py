@@ -120,10 +120,8 @@ async def poll_provider_source(client: httpx.AsyncClient, source_id: int) -> dic
         headers={**INTERNAL_HEADERS, "Content-Type": "application/json"},
         timeout=60,
     )
-        resp.raise_for_status()
+    resp.raise_for_status()
     return resp.json()
-
-
 
 
 

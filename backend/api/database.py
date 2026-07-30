@@ -14,6 +14,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -257,6 +258,20 @@ class ConfigTemplate(Base):
     org_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
 
 
+class UserLLMConfig(Base):
+    """Per-user LLM provider configuration (Story 15.1, FR-MT-70)."""
+    __tablename__ = "user_llm_configs"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    role = Column(String(16), primary_key=True)   # scorer|embedder|review|ask
+    provider = Column(String(32), nullable=False)
+    model = Column(String(128), nullable=False)
+    api_key_enc = Column(LargeBinary, nullable=True)  # Fernet ciphertext
+    base_url = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
 class UserSetting(Base):
     """Per-user key-value settings (FR-MT-38 / Story 6.5)."""
     __tablename__ = "user_settings"
@@ -403,6 +418,30 @@ def set_user_setting(db: Session, user_id: int, key: str, value: str) -> None:
     db.commit()
 
 
+def get_llm_config(db: Session, user_id: int, role: str):
+    """Return UserLLMConfig or None."""
+    return db.query(UserLLMConfig).filter_by(user_id=user_id, role=role).first()
+
+
+def set_llm_config(db: Session, user_id: int, role: str,
+                   provider: str, model: str,
+                   api_key_enc: bytes | None, base_url: str | None) -> None:
+    """Upsert LLM config for (user_id, role)."""
+    row = db.query(UserLLMConfig).filter_by(user_id=user_id, role=role).first()
+    if row:
+        row.provider = provider
+        row.model = model
+        row.api_key_enc = api_key_enc
+        row.base_url = base_url
+        row.updated_at = datetime.now(timezone.utc)
+    else:
+        db.add(UserLLMConfig(
+            user_id=user_id, role=role, provider=provider, model=model,
+            api_key_enc=api_key_enc, base_url=base_url,
+        ))
+    db.commit()
+
+
 def _seed_default_user():
     """Auto-create seed user_id=1 when AUTH_PASSWORD is set and users table is empty."""
     raw = os.getenv("AUTH_PASSWORD", "")
@@ -539,6 +578,8 @@ def init_db():
         "ALTER TABLE user_config ADD COLUMN pending_embed_model TEXT",
         # Story 14.3 — org-scoped templates
         "ALTER TABLE config_templates ADD COLUMN org_id INTEGER REFERENCES organizations(id)",
+        # Story 15.1 — per-user LLM configuration (FR-MT-70, FR-MT-71)
+        "CREATE TABLE IF NOT EXISTS user_llm_configs (user_id INTEGER NOT NULL REFERENCES users(id), role TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, api_key_enc BLOB, base_url TEXT, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, role))",
     ]
     with engine.connect() as conn:
         for stmt in _migrations:

@@ -20,6 +20,7 @@ from routers import (
     stats,
     admin,
     internal,
+    llm_config,
     profile,
     research,
     onboarding,
@@ -77,6 +78,7 @@ app.include_router(ask.router)
 app.include_router(stats.router)
 app.include_router(admin.router)
 app.include_router(internal.router)
+app.include_router(llm_config.router)
 app.include_router(profile.router)
 app.include_router(research.router)
 app.include_router(onboarding.router)

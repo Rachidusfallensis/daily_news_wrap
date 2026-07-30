@@ -1,4 +1,5 @@
 import json
+import os
 import structlog
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -10,7 +11,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from auth import require_session
-from database import Article, ArticleScore, Feed, User, UserConfig, get_db
+from database import Article, ArticleScore, Feed, User, UserConfig, get_db, set_llm_config
+from llm_crypto import LLMCryptoError, encrypt_key
+from services.tenant_llm_router import TenantLLMRouter
 
 logger = structlog.get_logger().bind(service="onboarding")
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
@@ -59,6 +62,13 @@ class OnboardingStep1Request(BaseModel):
 
 class OnboardingStep2Request(BaseModel):
     template_id: str
+
+
+class OnboardingStep3Request(BaseModel):
+    provider: str
+    model: str
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -145,6 +155,48 @@ async def save_step2(
 
     logger.info("onboarding_step2_saved", user_id=current_user["id"], template=body.template_id)
     return {"status": "ok"}
+
+
+# ── Step 3: LLM config ──────────────────────────────────────────────────
+
+
+@router.post("/step3")
+async def save_step3(
+    body: OnboardingStep3Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_session),
+):
+    """Save LLM config for scorer role. Embedder defaults to Ollama if not specified."""
+    user_id = current_user["id"]
+
+    # Scorer: use chosen provider
+    api_key_enc = None
+    if body.api_key:
+        try:
+            api_key_enc = encrypt_key(body.api_key)
+        except LLMCryptoError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+
+    set_llm_config(db, user_id, "scorer", body.provider, body.model, api_key_enc, body.base_url)
+    set_llm_config(db, user_id, "review", body.provider, body.model, api_key_enc, body.base_url)
+    set_llm_config(db, user_id, "ask", body.provider, body.model, api_key_enc, body.base_url)
+
+    # Embedder: Ollama by default (free, local)
+    ollama_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
+    set_llm_config(db, user_id, "embedder", "ollama",
+                   os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
+                   None, ollama_url)
+
+    TenantLLMRouter.invalidate(user_id)
+    logger.info("onboarding_step3_saved", user_id=user_id, provider=body.provider)
+    return {"status": "ok"}
+
+
+@router.post("/step3/skip")
+async def skip_step3(current_user: dict = Depends(require_session)):
+    """Skip LLM config — user will use global env var fallback."""
+    logger.info("onboarding_step3_skipped", user_id=current_user["id"])
+    return {"status": "skipped"}
 
 
 # ── Preview top scored articles (for Step 4) ──────────────────────────────

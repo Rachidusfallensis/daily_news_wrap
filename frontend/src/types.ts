@@ -533,3 +533,49 @@ export interface HighlightManagerItem {
   article_url: string
   article_score: number | null
 }
+
+// ── Tenant LLM configuration (Epic 15, FR-MT-70..77) ──────────────────────
+
+export interface ProviderField {
+  key: string
+  label: string
+  secret: boolean
+  required: boolean
+  help: string
+  placeholder: string
+  default: string
+}
+
+export interface ProviderDescriptor {
+  name: string
+  title: string
+  needs_key: boolean
+  fields: ProviderField[]
+  recommended_model: string | null
+  blurb: string
+}
+
+export interface LLMVerifyResult {
+  ok: boolean
+  error?: string
+}
+
+export interface LLMDetectResult {
+  provider: string | null
+}
+
+export interface LLMConfigOut {
+  role: string
+  provider: string
+  model: string
+  api_key_configured: boolean
+  base_url: string | null
+  source: string  // "user" | "env"
+}
+
+export interface LLMConfigIn {
+  provider: string
+  model: string
+  api_key?: string | null
+  base_url?: string | null
+}

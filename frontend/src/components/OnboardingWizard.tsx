@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import ConfigBootstrapStep from './ConfigBootstrapStep'
 import DiscoveryStep, { type AcceptedItems } from './DiscoveryStep'
 import FacetSchemaEditor from './FacetSchemaEditor'
+import LLMConfigStep, { type LLMConfigResult } from './LLMConfigStep'
 import TemplateBrowser from './TemplateBrowser'
 import { Loader2 } from 'lucide-react'
 import type { BootstrapResult, ClusterProposal, FacetSchema } from '../types'
@@ -10,7 +11,7 @@ interface OnboardingWizardProps {
   onComplete: () => void
 }
 
-const STEPS = ['Thesis', 'Clusters', 'Sources', 'First run']
+const STEPS = ['Thesis', 'Clusters', 'Sources', 'LLM', 'First run']
 
 export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const [step, setStep] = useState(1)
@@ -171,6 +172,35 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     setStep(4)
   }
 
+  const handleLLMNext = async (config: LLMConfigResult) => {
+    setSaving(true)
+    setError('')
+    try {
+      const res = await fetch('/api/onboarding/step3', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setError(data.detail || 'Failed to save LLM config')
+        setSaving(false)
+        return
+      }
+      setSaving(false)
+      setStep(5)
+    } catch {
+      setError('Network error')
+      setSaving(false)
+    }
+  }
+
+  const handleLLMSkip = () => {
+    fetch('/api/onboarding/step3/skip', { method: 'POST', credentials: 'include' }).catch(() => {})
+    setStep(5)
+  }
+
   const handleComplete = async () => {
     setCompleting(true)
     setError('')
@@ -192,10 +222,10 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     }
   }
 
-  // ── Step 4: trigger poll, stream via SSE, show top 3 ──────────────────
+  // ── Step 5: trigger poll, stream via SSE, show top 3 ──────────────────
 
   useEffect(() => {
-    if (step !== 4 || pollTriggered) return
+    if (step !== 5 || pollTriggered) return
     setPollTriggered(true)
 
     fetch('/api/poll/trigger', { method: 'POST', credentials: 'include' }).catch(() => {})
@@ -456,8 +486,19 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     )
   }
 
-  // Step 4 — first run poll with SSE progress + top 3 preview
-  if (step === 4 && pollPhase === 'running') {
+  if (step === 4) {
+    return (
+      <div className="flex h-screen w-screen items-start justify-center bg-bg-base pt-16 overflow-y-auto">
+        <div className="w-full max-w-2xl px-6 pb-12">
+          <StepIndicator />
+          <LLMConfigStep onNext={handleLLMNext} onSkip={handleLLMSkip} saving={saving} />
+        </div>
+      </div>
+    )
+  }
+
+  // Step 5 — first run poll with SSE progress + top 3 preview
+  if (step === 5 && pollPhase === 'running') {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-bg-base">
         <div className="w-full max-w-sm px-6 text-center">
@@ -481,7 +522,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     )
   }
 
-  // Step 4 — top 3 preview
+  // Step 5 — top 3 preview
   const top3 = previewArticles.slice(0, 3)
   return (
     <div className="flex h-screen w-screen items-start justify-center bg-bg-base pt-16 overflow-y-auto">
@@ -491,7 +532,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
           <h2 className="text-lg font-semibold text-text-primary mb-1">Your first results are in</h2>
           <p className="text-sm text-text-muted mb-7 leading-relaxed">
             These are the top-scoring articles so far, calibrated to <em>your</em> thesis. Scores will improve as Baṣīra learns your preferences.{' '}
-            <span className="text-[11px] font-mono text-text-muted">FR-MT-51 · Step 4</span>
+            <span className="text-[11px] font-mono text-text-muted">FR-MT-51 · Step 5</span>
           </p>
 
           {top3.length === 0 && (

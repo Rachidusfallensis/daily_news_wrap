@@ -71,7 +71,6 @@ from models import (
     TopCitedItem,
     TrackedAuthorOut,
     ThreatScanResponse,
-    _VALID_THESIS_SECTIONS,
     build_arise_row,
 )
 from routers.articles import ARISE_RE_DOCUMENT_TYPES
